@@ -1,0 +1,51 @@
+# wbtool / .gitignore
+# 文件说明：规定哪些文件不进 Git 仓库。
+# 原则：仓库只提交源码与文档；本机数据、构建产物、二进制程序一律排除，
+#       避免把含真实项目路径、会话标题的个人数据上传到公开仓库。
+
+# ---- 个人隐私数据（最高优先级）----
+# 程序生成的报告：内含本机项目路径、会话标题与用量明细
+wbtool_report.html
+wb_usage_report.html
+# 运行日志：内含本机绝对路径
+*.log
+# 任何人工导出的临时报告
+*_report.html
+# 本地私有配置
+.env
+*.local
+
+# ---- 编译后的程序（改由 GitHub Release 分发）----
+*.exe
+*.dll
+*.pyd
+*.zip
+
+# ---- 打包中间产物 ----
+build/
+dist/
+release/
+.build/
+*.spec
+
+# ---- Python 缓存 ----
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 本地验证 / 调试临时文件 ----
+_verify*.png
+_top.png
+_bottom.png
+_full.png
+_dom*.html
+_range_*.html
+_bottom_view.html
+_check.js
+
+# ---- 编辑器与操作系统 ----
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+desktop.ini
