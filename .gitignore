@@ -7,6 +7,8 @@
 # 程序生成的报告：内含本机项目路径、会话标题与用量明细
 wbtool_report.html
 wb_usage_report.html
+# 清理预览 / 结果页：含归档目录等本机绝对路径
+wbtool_clean_report.html
 # 运行日志：内含本机绝对路径
 *.log
 # 任何人工导出的临时报告
@@ -42,6 +44,12 @@ _dom*.html
 _range_*.html
 _bottom_view.html
 _check.js
+_test_clean.py
+
+# ---- 运行时产生的备份 / 回收暂存（由程序在清理时生成，含本机数据）----
+wbtool_backup/
+wbtool_trash/
+wbtool_archive/
 
 # ---- 编辑器与操作系统 ----
 .vscode/

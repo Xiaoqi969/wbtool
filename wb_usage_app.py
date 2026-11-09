@@ -12,19 +12,34 @@ wbtool - WorkBuddy 用量统计（Windows 单文件图形化工具）
 
 工作流程（用完即走，不常驻后台、不起服务、不联网）：
   1. 扫描 ~/.workbuddy/projects/**/*.jsonl，聚合全部可展示的统计字段
-  2. 生成一份完全自包含、离线可用的 HTML 报告
+  2. 生成一份完全自包含、离线可用的 HTML 报告（含超期日志清理预览面板）
   3. 用系统浏览器（优先 Microsoft Edge）打开报告
   4. 程序退出
 
+数据安全：默认只读，**绝不修改、移动或删除任何原始日志**。
+          仅当用户显式执行 `--clean --yes` 时，才按「两级删除范围」处理可清除的 jsonl：
+            ① 近 KEEP_RECENT_DAYS(7) 天内有过对话的会话，无论多久都永不清除；
+            ② 超过 7 天没有对话的会话，只清除「全部数据都超过 N 天」的整文件。
+          处理去向二选一（均【可恢复】）：
+            --mode backup  → 先完整备份到 wbtool 文件夹下的 wbtool_backup/<时间戳>/，再删原文件；
+            --mode recycle → 直接移入系统回收站（默认）。
+          不带 --yes 的 --clean 与 --clean-preview 一律只预览，不动文件。
+
 隐私承诺：绝不内联对话正文、推理文本、工具参数/输出、文件快照内容。
-          报告仅含统计数值、模型名、项目路径与时间。
+          报告仅含统计数值、模型名、项目路径与时间；
+          清理面板只列相对路径、大小与日期，不含绝对路径或文件内容。
 
 命令行：
-  python wb_usage_app.py                      扫描并打开报告
-  python wb_usage_app.py --no-open           只生成报告，不打开浏览器
-  python wb_usage_app.py --out FILE          指定报告输出路径
-  python wb_usage_app.py --projects DIR      指定 jsonl 目录（覆盖默认）
-  python wb_usage_app.py --version           显示版本号
+  python wb_usage_app.py                              扫描并打开报告
+  python wb_usage_app.py --no-open                   只生成报告，不打开浏览器
+  python wb_usage_app.py --out FILE                  指定报告输出路径
+  python wb_usage_app.py --projects DIR              指定 jsonl 目录（覆盖默认）
+  python wb_usage_app.py --days N                    超期阈值天数，默认 30
+  python wb_usage_app.py --clean-preview             只读：列出可清除文件（生成结果页）
+  python wb_usage_app.py --clean                     同上（缺少 --yes 时不会执行）
+  python wb_usage_app.py --clean --days 30 --yes                 回收站模式执行（默认）
+  python wb_usage_app.py --clean --mode backup --days 30 --yes   备份模式执行
+  python wb_usage_app.py --version                   显示版本号
 
 环境变量：
   WORKBUDDY_PROJECTS_DIR   覆盖默认的 ~/.workbuddy/projects
@@ -34,6 +49,7 @@ wbtool - WorkBuddy 用量统计（Windows 单文件图形化工具）
   等价于: pyinstaller --onefile --windowed --icon assets/wbtool.ico --name wbtool wb_usage_app.py
 """
 import argparse
+import ctypes
 import datetime as dt
 import json
 import os
@@ -44,11 +60,15 @@ import sys
 import tempfile
 import traceback
 import webbrowser
+from ctypes import wintypes
 from html import escape as esc_html
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 APP_NAME = "wbtool"
+CLEAN_DAYS_DEFAULT = 30        # 「可清除」阈值（天）：闲置会话中只有全部数据都超过该天数的才清除，可用 --days 覆盖
+KEEP_RECENT_DAYS = 7           # 规则1：近 N 天内有过对话的会话，无论文件多旧都【永不清除】
+CLEAN_BATCH_SIZE = 10          # 单次执行的文件数上限，逐批校验，降低误操作风险
 AUTHOR = "小柒"
 AUTHOR_URL = "https://xiaoqilucky.com"
 
@@ -135,7 +155,91 @@ def count_image_blocks(o):
     return n
 
 
-def collect_all(projects_dir=None):
+def scan_old_files(projects_dir=None, days=CLEAN_DAYS_DEFAULT):
+    """只读：按「两级删除范围」找出可清除的 jsonl，绝不修改、移动或删除任何文件。
+
+    两级口径（对应需求，先保护、后清除，宁保守勿误删）：
+      规则1（强保护）：最近 KEEP_RECENT_DAYS(7) 天内还有对话记录的会话，
+                      无论文件多旧都【永不清除】（忽略阈值天数）。
+      规则2（仅清超龄）：超过 7 天没有对话的会话，只清除「全部数据都超过 days(默认30) 天」的整文件。
+            —— 由于一个文件的最晚记录日期 < 今天-days 时，它所有数据必然都早已超过 days 天，
+               因此「可清除」等价于：最晚对话日期 < 今天-days（此时自然也满足 idle>7 才考虑清除）。
+    以整文件为单位（备份目录、系统回收站都是文件级操作），不逐行删，保留会话连续性。
+    返回值只含相对路径、大小、日期与行数，不含绝对路径与任何日志正文。
+    """
+    root = Path(projects_dir) if projects_dir else PROJECTS_DIR
+    n = max(1, int(days))
+    today = dt.date.today()
+    clear_cutoff = today - dt.timedelta(days=n)                 # 最晚记录早于此日 => 全量超龄，可清除
+    recent_cutoff = today - dt.timedelta(days=KEEP_RECENT_DAYS)  # 该日之后仍有对话 => 受规则1保护
+    candidates = []
+    protected_recent = 0   # 规则1 保护的会话数（近 KEEP_RECENT_DAYS 天内有对话）
+    idle_kept = 0          # 闲置>KEEP_RECENT_DAYS 天，但数据未全超龄、予以保留的会话数
+    for p in sorted(root.rglob("*.jsonl")):
+        if not p.is_file():
+            continue
+        try:
+            st = p.stat()
+            mtime_day = dt.datetime.fromtimestamp(st.st_mtime).date()
+        except (OSError, ValueError, OverflowError):
+            continue
+        last_day = None
+        lines = 0
+        try:
+            with p.open("r", encoding="utf-8", errors="ignore") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    lines += 1
+                    try:
+                        o = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(o, dict):
+                        continue
+                    ts = o.get("timestamp")
+                    if not isinstance(ts, (int, float)):
+                        continue
+                    try:
+                        moment = dt.datetime.fromtimestamp(ts / 1000 if ts > 1e11 else ts)
+                    except (OSError, ValueError, OverflowError):
+                        continue
+                    if last_day is None or moment.date() > last_day:
+                        last_day = moment.date()
+        except OSError:
+            continue
+        last = last_day or mtime_day  # 没有时间戳时退化为文件修改日期
+        # 两级判定：内容最晚日期或文件修改日期落在近 KEEP_RECENT_DAYS 天内 => 规则1 保护
+        if last >= recent_cutoff or mtime_day >= recent_cutoff:
+            protected_recent += 1
+            continue
+        # 已闲置超过 KEEP_RECENT_DAYS 天：仅当全部数据超龄（last < clear_cutoff）才清除
+        if last < clear_cutoff:
+            try:
+                rel = str(p.relative_to(root))
+            except ValueError:
+                continue
+            candidates.append({
+                "rel": rel,
+                "size": st.st_size,
+                "last": last.isoformat(),
+                "mtime": mtime_day.isoformat(),
+                "lines": lines,
+            })
+        else:
+            idle_kept += 1
+    return {
+        "days": n,
+        "clearCutoff": clear_cutoff.isoformat(),
+        "recentCutoff": recent_cutoff.isoformat(),
+        "files": candidates,
+        "bytes": sum(x["size"] for x in candidates),
+        "protectedRecent": protected_recent,
+        "idleKept": idle_kept,
+    }
+
+
+def collect_all(projects_dir=None, clean_days=CLEAN_DAYS_DEFAULT):
     """扫描 jsonl，只提取可展示的统计字段；projects_dir 为 None 时使用默认目录。"""
     records = []          # 每次 LLM 调用：token / 积分 / 模型 / 项目 / 会话 / 时间
     daily = {}            # 按天预聚合的行为统计
@@ -286,6 +390,7 @@ def collect_all(projects_dir=None):
         "genCredit": gen_credit,
         "quota": quota_out,
         "totalLines": total_lines,
+        "oldFiles": scan_old_files(scan_root, clean_days),
     }
 
 
@@ -376,6 +481,35 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
 .chip{background:#f1f6f7;border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-size:12px;color:#475569}
 .chip b{color:var(--teal-d);font-variant-numeric:tabular-nums}
 .free{color:#0a9b6a;font-weight:600}
+.clean-warn{background:#fff8e8;border:1px solid #f2dca8;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#8a6316;line-height:1.85;margin:14px 0 0}
+.clean-warn b{color:#7a5209}
+.clean-ok{background:#e9f7f1;border:1px solid #bfe8d6;border-radius:10px;padding:16px;font-size:13px;color:#1d6b4f;text-align:center;margin:12px 0 0}
+.clean-cmd{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.clean-cmd code{flex:1;min-width:240px;background:#f1f6f7;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:12px;color:#334155;word-break:break-all;font-family:Consolas,"Courier New",monospace}
+.btn{border:1px solid #cbeaee;background:var(--teal-soft);color:var(--teal-d);font-size:12.5px;font-weight:600;padding:9px 14px;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap;transition:all .15s}
+.btn:hover{background:var(--teal-d);border-color:var(--teal-d);color:#fff}
+.btn.primary{background:var(--teal-d);border-color:var(--teal-d);color:#fff}
+.btn.primary:hover{background:#066874}
+.clean-foot{font-size:11.5px;color:var(--muted);line-height:1.9;margin-top:12px}
+.clean-warn code,.clean-foot code{background:#fdf1d8;padding:1px 5px;border-radius:4px;font-size:11.5px}
+.clean-foot code{background:#eef3f5}
+/* 清除确认弹窗（modal）：勾选备份 / 确认按钮弹窗打开后禁用3秒 */
+.modal-overlay{position:fixed;inset:0;background:rgba(16,24,40,.45);display:flex;align-items:center;justify-content:center;z-index:200;padding:18px}
+.modal-overlay[hidden]{display:none}
+.modal{background:#fff;border-radius:16px;max-width:660px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 16px 50px rgba(16,24,40,.28);padding:22px 24px}
+.modal-h{font-size:17px;font-weight:700;margin:0 0 6px}
+.modal-sub{font-size:12.5px;color:#5b6573;line-height:1.7;margin-bottom:12px}
+.modal-sub b{color:var(--teal-d)}
+.modal-list{max-height:240px;margin-bottom:14px}
+.chk{display:flex;align-items:flex-start;gap:9px;font-size:13px;color:#334155;background:#f7fafb;border:1px solid var(--line);border-radius:10px;padding:11px 13px;cursor:pointer;line-height:1.6}
+.chk input{margin-top:2px;width:16px;height:16px;flex:0 0 16px;cursor:pointer}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
+.btn.danger{background:#e2533b;border-color:#e2533b;color:#fff}
+.btn.danger:hover{background:#c8402a;border-color:#c8402a}
+.btn.danger:disabled{background:#f0b3a6;border-color:#f0b3a6;color:#fff;cursor:not-allowed;opacity:.9}
+.modal-cmd{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+.modal-cmd-tip{font-size:12px;color:#8a6316;background:#fff8e8;border:1px solid #f2dca8;border-radius:9px;padding:9px 12px;line-height:1.7;margin-bottom:10px}
+.modal-cmd code{display:block;background:#f1f6f7;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12px;color:#334155;word-break:break-all;font-family:Consolas,"Courier New",monospace;margin-bottom:10px}
 #tip{position:fixed;pointer-events:none;background:#16202b;color:#fff;padding:8px 11px;border-radius:9px;font-size:12px;line-height:1.55;box-shadow:0 6px 20px rgba(0,0,0,.25);opacity:0;transition:opacity .12s;z-index:99;white-space:nowrap}
 #tip b{color:#7dd3fc}
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -475,7 +609,37 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
       <th>思考</th><th>缓存未命中</th><th>积分</th><th>工具调用</th>
     </tr></thead><tbody id="dailyRows"></tbody></table></div>
   </div>
+
+  <div class="panel">
+    <div class="ph"><h2>数据清理</h2><div class="hint">近 7 天活跃会话受保护 · 只清除闲置且全量超 N 天的整文件 · 不随范围切换</div></div>
+    <div class="mini3" id="cleanCards"></div>
+    <div id="cleanBody"></div>
+    <button class="btn primary" id="btnClean" type="button">清除旧数据…</button>
+    <div class="clean-warn" id="cleanWarn"></div>
+    <div class="clean-foot" id="cleanFoot"></div>
+  </div>
 </div>
+
+<!-- 清除确认弹窗：列出待清除文件 + 备份勾选框（默认不勾选）+ 确认按钮（打开后禁用3秒） -->
+<div class="modal-overlay" id="cleanModal" hidden>
+  <div class="modal">
+    <div class="modal-h">确认清除旧数据</div>
+    <div class="modal-sub" id="modalSub"></div>
+    <div class="tbl-wrap modal-list" id="modalList"></div>
+    <label class="chk"><input type="checkbox" id="backupChk">
+      备份数据（勾选：先完整备份到 <code>wbtool_backup/</code> 再删除原文件；不勾选：直接移入系统回收站）</label>
+    <div class="modal-actions">
+      <button class="btn" id="modalCancel" type="button">取消</button>
+      <button class="btn danger" id="modalConfirm" type="button" disabled>确认清除</button>
+    </div>
+    <div class="modal-cmd" id="modalCmd" hidden>
+      <div class="modal-cmd-tip">⚠️ 本报告是 file:// 静态页，<b>浏览器没有权限删除本地文件</b>。请在<b>命令行</b>里运行下方命令（不是双击）：它会启动 wbtool 执行实际的备份 / 回收站操作。命令已自动复制。</div>
+      <code id="modalCmdText"></code>
+      <button class="btn primary" id="modalCopy" type="button">复制命令</button>
+    </div>
+  </div>
+</div>
+
 <div id="tip"></div>
 
 <script>
@@ -698,6 +862,100 @@ function renderAll(N){
   renderHours(ev); renderSessions(a,N); renderMisc(ev); renderDailyTable(a,ev);
 }
 
+// 数据清理面板：只渲染 Python 端内联的只读清单，不访问、不修改任何本地文件。
+function renderClean(){
+  const o=DATA.oldFiles||{days:30,clearCutoff:'',files:[],bytes:0,protectedRecent:0,idleKept:0};
+  const f=o.files||[], bytes=o.bytes||0;
+  const sizeText = bytes>=1048576 ? (bytes/1048576).toFixed(2)+' <small>MB</small>'
+                                  : (bytes/1024).toFixed(1)+' <small>KB</small>';
+  document.getElementById('cleanCards').innerHTML=[
+    ['可清除文件',fmt(f.length)+' <small>个</small>'],
+    ['可释放空间',sizeText],
+    ['清除分界日',esc(o.clearCutoff)]
+  ].map(([k,v])=>`<div class="ovc"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+  const body=document.getElementById('cleanBody');
+  if(!f.length){
+    body.innerHTML='<div class="clean-ok">✓ 当前没有可清除的旧数据。'+fmt(o.protectedRecent)+' 个近 7 天活跃会话受保护，'
+      +fmt(o.idleKept)+' 个闲置但数据未满 '+o.days+' 天的会话已保留。</div>';
+  }else{
+    const rows=f.slice(0,20).map(x=>`<tr><td class="d" style="text-align:left;max-width:520px;overflow:hidden;text-overflow:ellipsis" title="${esc(x.rel)}">${esc(x.rel)}</td>
+      <td>${(x.size/1024).toFixed(1)} KB</td><td>${esc(x.last)}</td><td>${fmt(x.lines)}</td></tr>`).join('');
+    body.innerHTML='<div class="tbl-wrap" style="max-height:300px"><table class="tbl"><thead><tr>'
+      +'<th>文件（相对日志目录）</th><th>大小</th><th>最晚记录</th><th>行数</th></tr></thead><tbody>'
+      +rows+'</tbody></table></div>'
+      +(f.length>20?'<div class="clean-foot">仅显示前 20 个，共 '+f.length+' 个；完整清单见命令行预览结果页。</div>':'')
+      +'<div class="clean-foot">'+fmt(o.protectedRecent)+' 个近 7 天活跃会话已受保护，'+fmt(o.idleKept)+' 个闲置但数据未满 '+o.days+' 天已保留。</div>';
+  }
+
+  document.getElementById('cleanWarn').innerHTML=
+    '<b>⚠️ 清理会移走 WorkBuddy 的会话日志，可能导致历史会话无法恢复，请先确认不再需要。</b><br>'
+    +'<b>两级删除范围：</b>① 近 <b>7 天</b>内有过对话的会话，无论多久都<b>永不清除</b>；'
+    +'② 超过 7 天没有对话的会话，<b>只清除全部数据都超过 '+o.days+' 天</b>的整文件。<br>'
+    +'点「清除旧数据…」会在弹窗里让你选择去向：<b>勾选备份</b> → 先完整备份到 wbtool 文件夹下的 '
+    +'<code>wbtool_backup/</code> 再删原文件；<b>不勾选</b> → 直接移入系统<b>回收站</b>。两者都可恢复。';
+
+  document.getElementById('cleanFoot').innerHTML=
+    '本报告是 <code>file://</code> 静态页，<b>浏览器没有权限删除本地文件</b>，'
+    +'因此弹窗确认后只会生成并复制一条命令，请到<b>命令行</b>运行 wbtool.exe（不是双击）来真正执行。<br>'
+    +'默认 <b>只预览、不动文件</b>；只有命令里带 <b>--yes</b> 才会执行。'
+    +'若你用 <code>--projects</code> 或环境变量 <code>WORKBUDDY_PROJECTS_DIR</code> 指定了别的日志目录，'
+    +'请在命令后补上同样的参数（本面板不内联你的绝对路径）。'
+    +'源码运行时把 <code>wbtool.exe</code> 换成 <code>python wb_usage_app.py</code>。';
+}
+
+// 全局事件绑定助手（供清除弹窗复用）
+function bind(id,fn){ const el=document.getElementById(id); if(el) el.addEventListener('click',fn); }
+
+// ---- 清除确认弹窗 ----
+let cleanTimer=null;
+function openCleanModal(){
+  const o=DATA.oldFiles||{days:30,files:[]};
+  const f=o.files||[];
+  document.getElementById('modalSub').innerHTML='即将清除 <b>'+fmt(f.length)+'</b> 个会话日志（'
+    +fmt(o.protectedRecent||0)+' 个近 7 天活跃会话已自动保护，'
+    +fmt(o.idleKept||0)+' 个闲置但数据未满 '+o.days+' 天的会话已保留）。';
+  const rows=f.slice(0,30).map(x=>`<tr><td class="d" style="text-align:left;max-width:520px;overflow:hidden;text-overflow:ellipsis" title="${esc(x.rel)}">${esc(x.rel)}</td>
+    <td>${(x.size/1024).toFixed(1)} KB</td><td>${esc(x.last)}</td></tr>`).join('');
+  document.getElementById('modalList').innerHTML = f.length
+    ? '<table class="tbl"><thead><tr><th>文件（相对日志目录）</th><th>大小</th><th>最晚记录</th></tr></thead><tbody>'+rows+'</tbody></table>'
+      +(f.length>30?'<div class="clean-foot">仅显示前 30 个，共 '+f.length+' 个</div>':'')
+    : '<div class="clean-ok">✓ 当前没有可清除的旧数据。</div>';
+  document.getElementById('modalCmd').hidden=true;
+  document.getElementById('backupChk').checked=false;          // 默认不勾选备份
+  const btn=document.getElementById('modalConfirm');
+  btn.disabled=true; btn.textContent='确认清除';               // 弹窗打开后禁用3秒
+  document.getElementById('cleanModal').hidden=false;
+  if(cleanTimer) clearTimeout(cleanTimer);
+  cleanTimer=setTimeout(()=>{ btn.disabled=false; }, 3000);    // 3秒后启用
+}
+function closeCleanModal(){ document.getElementById('cleanModal').hidden=true; if(cleanTimer){clearTimeout(cleanTimer);cleanTimer=null;} }
+function confirmClean(){
+  const o=DATA.oldFiles||{days:30,files:[]};
+  if(!(o.files||[]).length){ closeCleanModal(); return; }
+  const backup=document.getElementById('backupChk').checked;   // 勾选→备份，不勾选→回收站
+  const mode=backup?'backup':'recycle';
+  const cmd='wbtool.exe --clean --mode '+mode+' --days '+o.days+' --yes';
+  document.getElementById('modalCmdText').textContent=cmd;
+  document.getElementById('modalCmd').hidden=false;
+  copyText(cmd, document.getElementById('modalCopy'));          // 自动复制命令
+}
+// clipboard API 在 file:// 下可能不可用，降级为 execCommand，保证离线报告也能复制。
+function copyText(text,btn){
+  const done=()=>{ const old=btn.dataset.label||btn.textContent; btn.dataset.label=old; btn.textContent='✓ 已复制'; setTimeout(()=>{btn.textContent=old;},1600); };
+  const fallback=()=>{
+    const ta=document.createElement('textarea'); ta.value=text;
+    ta.style.position='fixed'; ta.style.opacity='0'; ta.style.left='-9999px';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    let ok=false; try{ ok=document.execCommand('copy'); }catch(e){ ok=false; }
+    document.body.removeChild(ta);
+    if(ok) done(); else window.alert('复制失败，请手动选中上方命令文本复制。');
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(fallback);
+  }else fallback();
+}
+
 document.getElementById('meta').innerHTML='数据更新于 '+esc(DATA.generatedAt)+'<br>共 '+DATA.records.length+' 次调用 / '+fmt(DATA.totalLines)+' 行日志 · '+esc(DATA.appName||'wbtool')+' v'+esc(DATA.appVersion||'');
 document.getElementById('cards').innerHTML=periodCard('今天',1)+periodCard('近 7 天',7)+periodCard('近 30 天',30);
 document.querySelectorAll('#ranges button').forEach(b=>b.addEventListener('click',()=>{
@@ -705,6 +963,12 @@ document.querySelectorAll('#ranges button').forEach(b=>b.addEventListener('click
   b.classList.add('on'); renderAll(b.dataset.n==='all'?'all':Number(b.dataset.n));
 }));
 renderAll(30);
+renderClean();
+// 清除弹窗按钮接线
+bind('btnClean', openCleanModal);
+bind('modalCancel', closeCleanModal);
+bind('modalConfirm', confirmClean);
+bind('modalCopy', ()=>copyText(document.getElementById('modalCmdText').textContent, document.getElementById('modalCopy')));
 </script>
 </body>
 </html>
@@ -768,15 +1032,15 @@ def log_line(text):
             continue
 
 
-def write_report(html, explicit=None):
+def write_report(html, explicit=None, name="wbtool_report.html"):
     """写报告；显式路径优先，否则依次尝试 程序目录 → 家目录 → 临时目录。
 
     这样即使 exe 被放在 C:\\Program Files 等只读位置也不会崩溃。
+    name 用于区分「用量报告」与「清理结果页」，避免互相覆盖。
     """
     if explicit:
         targets = [Path(explicit).expanduser()]
     else:
-        name = "wbtool_report.html"
         targets = [app_dir() / name, HOME / name, Path(tempfile.gettempdir()) / name]
     last = None
     for p in targets:
@@ -834,7 +1098,273 @@ code{background:#f1f6f7;padding:2px 6px;border-radius:5px;font-size:12.5px;word-
                .replace("__ITEMS__", items))
 
 
-def build_report(projects_dir, out=None, do_open=True):
+# ----------------------------------------------------------------------------
+# 旧数据清理：默认只读；仅 --clean --yes 才执行。两种去向，皆可恢复：
+#   mode=backup  → 先复制完整备份到 wbtool_backup/<时间戳>/，再删除原文件
+#   mode=recycle → 直接移入系统回收站（可恢复）
+# ----------------------------------------------------------------------------
+def send_to_recycle_bin(paths):
+    """把若干文件移入系统回收站（可恢复）。仅依赖标准库 ctypes，无第三方依赖。
+
+    非 Windows 平台无系统回收站，退化为移动到 app_dir()/wbtool_trash/<时间戳>/ 下，
+    同样不是永久删除。返回 (ok, failed_list)。
+    """
+    if not paths:
+        return True, []
+    if platform.system() == "Windows":
+        try:
+            FO_DELETE = 0x0003
+            FOF_ALLOWUNDO = 0x0040      # 移入回收站（可撤销），而非永久删除
+            FOF_NOCONFIRMATION = 0x0010
+            FOF_NOERRORUI = 0x0400
+            FOF_SILENT = 0x0004
+
+            class SHFILEOPSTRUCTW(ctypes.Structure):
+                _fields_ = [
+                    ("hwnd", wintypes.HWND),
+                    ("wFunc", wintypes.UINT),
+                    ("pFrom", wintypes.LPCWSTR),
+                    ("pTo", wintypes.LPCWSTR),
+                    ("fFlags", wintypes.UINT),
+                    ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", wintypes.LPVOID),
+                    ("lpszProgressTitle", wintypes.LPCWSTR),
+                ]
+
+            # SHFileOperation 的 pFrom 是「每条路径 \0 结尾、整体再 \0\0 结尾」的宽字符串
+            from_str = "\0".join(str(p) for p in paths) + "\0\0"
+            op = SHFILEOPSTRUCTW()
+            op.hwnd = 0
+            op.wFunc = FO_DELETE
+            op.pFrom = from_str
+            op.pTo = None
+            op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT
+            res = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+            if res == 0 and not op.fAnyOperationsAborted:
+                return True, []
+            log_line("SHFileOperation 返回 " + str(res) + "（可能部分失败）")
+            return False, list(paths)
+        except Exception as e:
+            log_line("回收站调用异常：" + str(e))
+            return False, list(paths)
+    else:
+        # 非 Windows：退化为本地 trash 文件夹移动（仍非永久删除）
+        dest_root = (app_dir() / "wbtool_trash" /
+                     dt.datetime.now().strftime("%Y%m%d-%H%M%S")).resolve()
+        failed = []
+        for p in paths:
+            src = Path(p)
+            if not src.is_file():
+                failed.append(str(p))
+                continue
+            dst = dest_root / src.name
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                src.replace(dst)
+            except OSError:
+                failed.append(str(p))
+        return (len(failed) == 0), failed
+
+
+def clean_execute(projects_dir, days, apply, mode):
+    """只读预览或执行清理，返回 (info, moved, dest, mode)。
+
+    两级删除范围由 scan_old_files 保证（近 KEEP_RECENT_DAYS 天活跃会话永不清除；
+    闲置会话仅清除全量超 days 天的整文件）。
+
+    安全性（对应「删除个人文件」的高风险门禁）：
+      - apply=False 时绝不创建目录、绝不移动/删除任何文件；
+      - 执行前逐文件二次校验：路径仍在日志目录内、后缀仍是 .jsonl、大小与预览一致；
+      - 每批最多 CLEAN_BATCH_SIZE 个，逐个校验落盘成功；
+      - 备份模式先复制校验通过再删原文件；回收站模式整批移入系统回收站（可恢复）。
+    """
+    root = Path(projects_dir).expanduser().resolve()
+    info = scan_old_files(root, days)
+    files = info["files"]
+    if not apply or not files:
+        return info, [], None, mode
+
+    moved = []
+    if mode == "backup":
+        # 备份目录放在程序所在目录（wbtool 文件夹）下的 wbtool_backup/，专门存放备份数据；
+        # 且绝不在日志目录内部，避免被再次扫描。
+        dest_root = (app_dir() / "wbtool_backup" /
+                     dt.datetime.now().strftime("%Y%m%d-%H%M%S")).resolve()
+        if dest_root == root or root in dest_root.parents:
+            raise RuntimeError("备份目录不能位于日志目录内部，已中止清理")
+        for start in range(0, len(files), CLEAN_BATCH_SIZE):
+            batch = files[start:start + CLEAN_BATCH_SIZE]
+            for item in batch:
+                src = (root / item["rel"]).resolve()
+                if root not in src.parents or src.suffix.lower() != ".jsonl" or not src.is_file():
+                    raise RuntimeError("异常路径，已中止清理：" + item["rel"])
+                st = src.stat()
+                if st.st_size != item["size"]:
+                    raise RuntimeError("文件大小与预览不一致，已中止清理：" + item["rel"])
+                dst = (dest_root / item["rel"]).resolve()
+                if dest_root not in dst.parents:
+                    raise RuntimeError("备份目标越界，已中止清理：" + item["rel"])
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)                  # 第一步：完整复制备份
+                if not dst.is_file() or dst.stat().st_size != item["size"]:
+                    raise RuntimeError("备份校验失败，已中止：" + item["rel"])
+                src.unlink()                            # 第二步：备份无误后再删原文件
+                moved.append({"rel": item["rel"], "size": item["size"], "last": item["last"]})
+                log_line("已备份并移除 " + item["rel"] + " -> " + str(dst))
+            log_line(f"备份进度 {len(moved)}/{len(files)}")
+        try:
+            (dest_root / "manifest.json").write_text(
+                json.dumps({"createdAt": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "sourceRoot": str(root), "mode": "backup",
+                            "days": info["days"], "clearCutoff": info["clearCutoff"],
+                            "files": moved}, ensure_ascii=False, indent=2),
+                encoding="utf-8")
+        except OSError as e:
+            log_line("备份清单写入失败（不影响已备份文件）：" + str(e))
+        return info, moved, dest_root, mode
+    else:
+        # mode == "recycle"：整批移入系统回收站（可恢复）
+        paths = []
+        for item in files:
+            src = (root / item["rel"]).resolve()
+            if root not in src.parents or src.suffix.lower() != ".jsonl" or not src.is_file():
+                raise RuntimeError("异常路径，已中止清理：" + item["rel"])
+            st = src.stat()
+            if st.st_size != item["size"]:
+                raise RuntimeError("文件大小与预览不一致，已中止清理：" + item["rel"])
+            paths.append(str(src))
+        ok, failed = send_to_recycle_bin(paths)
+        if not ok:
+            raise RuntimeError("移入回收站失败：" + "；".join(failed[:5]))
+        moved = [{"rel": item["rel"], "size": item["size"], "last": item["last"]}
+                 for item in files]
+        return info, moved, "回收站", mode
+
+
+def clean_result_html(info, moved, dest, applied, note, mode="recycle"):
+    """清理预览 / 结果页：windowed exe 没有控制台，结果必须以可见页面呈现。
+
+    mode 仅影响「已执行」时的文案与恢复指引：backup=备份到 wbtool_backup/；recycle=移入回收站。
+    """
+    files = info["files"]
+    b = info["bytes"]
+    size_txt = f"{b / 1048576:.2f} MB" if b >= 1048576 else f"{b / 1024:.1f} KB"
+    if applied:
+        cls = "ok"
+        if mode == "backup":
+            title = "清理完成 · 已备份到 wbtool_backup/ 并移除原文件"
+            desc = (f"已把 <b>{len(moved)}</b> 个可清除的 jsonl <b>完整备份</b>到 wbtool_backup/ 下的时间戳目录，"
+                    "随后从日志目录移除了原文件。需要找回时，按 manifest.json 里的 rel 路径把备份搬回即可。")
+        else:
+            title = "清理完成 · 已移入系统回收站（可恢复）"
+            desc = (f"已把 <b>{len(moved)}</b> 个可清除的 jsonl 移入<b>系统回收站</b>。"
+                    "它们并没有被永久删除，打开回收站即可还原；如需彻底删除，再从回收站清空即可。")
+    else:
+        cls = "warn"
+        title = "只读预览 · 本次没有移动任何文件"
+        desc = (f"以下 <b>{len(files)}</b> 个文件符合清理条件。本次<b>没有</b>移动、修改或删除任何文件。"
+                + esc_html(note))
+
+    if not files:
+        body = ('<div class="empty">当前没有可清除的旧数据（近 '
+                + str(KEEP_RECENT_DAYS) + ' 天活跃会话受保护，闲置会话需全量超过 '
+                + str(info["days"]) + ' 天才清除），无需清理。</div>')
+    else:
+        rows = "".join(
+            "<tr><td class='p'>" + esc_html(f["rel"]) + "</td><td>" +
+            f"{f['size'] / 1024:.1f} KB" + "</td><td>" + esc_html(f["last"]) +
+            "</td><td>" + f"{f['lines']:,}" + "</td></tr>"
+            for f in files[:200])
+        more = (f"<div class='tip'>仅显示前 200 个，共 {len(files)} 个；完整清单见备份 manifest.json 或命令行输出。</div>"
+                if len(files) > 200 else "")
+        body = ("<table><thead><tr><th>文件（相对日志目录）</th><th>大小</th>"
+                "<th>最晚记录</th><th>行数</th></tr></thead><tbody>" + rows +
+                "</tbody></table>" + more)
+
+    archive_html = ""
+    if applied and dest:
+        if mode == "backup":
+            archive_html = ("<div class='arch'><b>备份目录（专门存放备份数据，请勿删除）</b><br><code>" +
+                            esc_html(str(dest)) + "</code><br>"
+                            "<span>恢复方法：把该目录下的 jsonl 按 manifest.json 里的 rel 路径搬回日志目录即可。"
+                            "</span></div>")
+        else:
+            archive_html = ("<div class='arch'><b>已移入系统回收站</b><br>"
+                            "<span>这些文件没有被永久删除，打开系统回收站即可还原；"
+                            "确认不再需要后，再从回收站清空即可彻底删除。</span></div>")
+
+    tpl = """<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__ · wbtool</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f4f7f8;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Roboto,Arial,sans-serif;font-size:14px;padding:40px 20px}
+.box{background:#fff;border:1px solid #e8edf0;border-radius:16px;padding:26px 30px;max-width:900px;margin:0 auto;box-shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.05)}
+.hd{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.logo{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#0aa6b8,#36d4e0);color:#fff;font-weight:800;font-size:21px;display:flex;align-items:center;justify-content:center;flex:0 0 44px}
+h1{font-size:19px;margin:0 0 4px;font-weight:700}
+.sub{font-size:12px;color:#8a94a3;margin:0}
+a{color:#07808f;text-decoration:none;font-weight:600}
+.state{border-radius:12px;padding:14px 18px;line-height:1.9;font-size:13px;margin-bottom:18px}
+.state.ok{background:#e9f7f1;border:1px solid #bfe8d6;color:#1d6b4f}
+.state.warn{background:#fff8e8;border:1px solid #f2dca8;color:#8a6316}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px}
+.cards div{background:#f7fafb;border:1px solid #e8edf0;border-radius:10px;padding:12px 14px}
+.cards .k{font-size:11.5px;color:#8a94a3;margin-bottom:5px}
+.cards .v{font-size:17px;font-weight:700;color:#16202b}
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:8px}
+th{text-align:right;color:#8a94a3;font-weight:600;font-size:11.5px;padding:8px 10px;border-bottom:1px solid #e8edf0;white-space:nowrap}
+td{text-align:right;padding:8px 10px;border-bottom:1px solid #f3f6f7;color:#475569;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+td.p{max-width:520px;overflow:hidden;text-overflow:ellipsis;color:#16202b;font-weight:600}
+.empty{background:#f7fafb;border-radius:10px;padding:22px;text-align:center;color:#475569}
+.arch{background:#eef8fa;border:1px solid #cbeaee;border-radius:10px;padding:14px 16px;font-size:12.5px;line-height:1.9;color:#334155;margin:16px 0}
+.arch span{color:#5b6573}
+code{background:#f1f6f7;padding:2px 6px;border-radius:5px;font-size:12px;word-break:break-all}
+.tip{font-size:12px;color:#8a94a3;line-height:1.9;margin-top:14px;padding-top:14px;border-top:1px solid #e8edf0}
+@media(max-width:680px){.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="hd"><div class="logo">W</div><div>
+    <h1>__TITLE__</h1>
+    <p class="sub">wbtool v__VERSION__ · 数据清理 · <a href="__AUTHOR_URL__" target="_blank" rel="noopener noreferrer">作者:__AUTHOR__ ↗</a></p>
+  </div></div>
+  <div class="state __CLS__">__DESC__</div>
+  <div class="cards">
+    <div><div class="k">清除阈值</div><div class="v">__DAYS__ 天</div></div>
+    <div><div class="k">分界日期</div><div class="v">__CUTOFF__</div></div>
+    <div><div class="k">命中文件 / 可释放</div><div class="v">__COUNT__ 个 · __SIZE__</div></div>
+  </div>
+  __BODY__
+  __ARCHIVE__
+  <p class="tip">⚠️ jsonl 是 WorkBuddy 的会话日志，移走后对应的历史会话可能无法在 WorkBuddy 中恢复，请先确认不再需要。<br>
+  两级删除范围：<strong>近 __RECENT__ 天内有过对话的会话永不清除</strong>；超过 __RECENT__ 天没有对话的会话，<strong>只清除全部数据都超过 __DAYS__ 天的整文件</strong>；只整文件处理，不逐行删。<br>
+  只读命令：<code>wbtool.exe --clean-preview --days __DAYS__</code> ｜ 执行命令：<code>wbtool.exe --clean --mode backup|recycle --days __DAYS__ --yes</code>（缺 --yes 只会预览；默认 mode=recycle 移入回收站）。<br>
+  本工具完全离线运行，不联网、不上传；只读取统计字段，绝不内联对话正文。</p>
+</div>
+</body>
+</html>"""
+    return (tpl.replace("__TITLE__", esc_html(title))
+               .replace("__VERSION__", __version__)
+               .replace("__AUTHOR__", esc_html(AUTHOR))
+               .replace("__AUTHOR_URL__", AUTHOR_URL)
+               .replace("__CLS__", cls)
+               .replace("__DESC__", desc)
+               .replace("__DAYS__", str(info["days"]))
+               .replace("__RECENT__", str(KEEP_RECENT_DAYS))
+               .replace("__CUTOFF__", esc_html(info["clearCutoff"]))
+               .replace("__COUNT__", str(len(files)))
+               .replace("__SIZE__", size_txt)
+               .replace("__BODY__", body)
+               .replace("__ARCHIVE__", archive_html))
+
+
+def build_report(projects_dir, out=None, do_open=True, clean_days=CLEAN_DAYS_DEFAULT):
     """核心流程：扫描 → 生成 → 打开。返回 (报告路径, 调用次数, 日志行数)。"""
     root = Path(projects_dir).expanduser()
     if not root.is_dir():
@@ -851,7 +1381,7 @@ def build_report(projects_dir, out=None, do_open=True):
         return p, 0, 0
 
     log_line(f"开始扫描 {root}")
-    data = collect_all(root)
+    data = collect_all(root, clean_days)
     if data["totalLines"] == 0:
         html = notice_html("数据目录里还没有会话记录", [
             "已找到目录：" + str(root),
@@ -880,6 +1410,41 @@ def build_report(projects_dir, out=None, do_open=True):
     return p, len(data["records"]), data["totalLines"]
 
 
+def run_clean(args):
+    """清理模式：预览 / 执行（备份到 wbtool_backup 或移入回收站），结果写成 HTML 页面。"""
+    root = Path(args.projects).expanduser()
+    applied = bool(args.clean and args.yes)
+    mode = args.mode or "recycle"
+    if args.clean and not args.yes:
+        note = " 要真正执行，请加 --yes（并可用 --mode backup|recycle 选择去向）。"
+    elif args.clean_preview:
+        note = " 这是 --clean-preview 的只读预览。"
+    else:
+        note = ""
+    log_line(f"清理模式 days={args.days} mode={mode} apply={applied} dir={root}")
+    try:
+        info, moved, dest, mode = clean_execute(root, args.days, applied, mode)
+    except Exception:
+        err = traceback.format_exc()
+        log_line("清理失败：\n" + err)
+        html = notice_html("清理未完成", [
+            "清理流程在校验阶段被中止，没有删除任何文件。",
+            "已完成的备份（如有）逐条记录在 wbtool.log，备份目录里的文件完整可搬回。",
+            err.strip().splitlines()[-1],
+        ])
+        p = write_report(html, args.out, name="wbtool_clean_report.html")
+        open_report(p)
+        return 1
+
+    html = clean_result_html(info, moved, dest, applied, note, mode)
+    p = write_report(html, args.out, name="wbtool_clean_report.html")
+    log_line(("已处理 " + str(len(moved)) + " 个文件（" + mode + "）" if applied else "只读预览")
+             + " → 结果页 " + str(p) + (f" | 去向 {dest}" if dest else ""))
+    if not args.no_open:
+        open_report(p)
+    return 0
+
+
 def parse_args(argv=None):
     """命令行参数定义。"""
     ap = argparse.ArgumentParser(
@@ -890,7 +1455,21 @@ def parse_args(argv=None):
     ap.add_argument("--projects", metavar="DIR", default=str(PROJECTS_DIR),
                     help="会话日志目录，默认 ~/.workbuddy/projects")
     ap.add_argument("--out", metavar="FILE", help="报告输出路径，默认写到程序所在目录")
-    ap.add_argument("--no-open", action="store_true", help="只生成报告，不自动打开浏览器")
+    ap.add_argument("--no-open", action="store_true", help="只生成报告 / 结果页，不自动打开浏览器")
+    ap.add_argument("--days", type=int, default=CLEAN_DAYS_DEFAULT, metavar="N",
+                    help=f"清除阈值天数，默认 {CLEAN_DAYS_DEFAULT}。两级删除范围见下："
+                         f"近 {KEEP_RECENT_DAYS} 天活跃会话永不清除；闲置会话仅清除全量超 N 天的整文件")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--clean-preview", action="store_true",
+                      help="只读：列出可清除的 jsonl，绝不移动任何文件（生成结果页）")
+    mode.add_argument("--clean", action="store_true",
+                      help="清理可清除的 jsonl；缺少 --yes 时自动降级为只读预览")
+    ap.add_argument("--mode", choices=["backup", "recycle"], default="recycle",
+                    help="清理去向（仅 --clean --yes 时生效）："
+                         "backup=先完整备份到 wbtool_backup/ 再删原文件；"
+                         "recycle=移入系统回收站（默认，可恢复）")
+    ap.add_argument("--yes", action="store_true",
+                    help="仅与 --clean 同用才真正执行清理；默认绝不移动/删除文件")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return ap.parse_args(argv)
 
@@ -898,8 +1477,13 @@ def parse_args(argv=None):
 def main(argv=None):
     """程序入口；任何异常都会落日志并尽量显示一页友好提示。"""
     args = parse_args(argv)
+    if args.days < 1:
+        log_line("--days 必须是正整数，已拒绝执行")
+        return 2
+    if args.clean_preview or args.clean:
+        return run_clean(args)
     try:
-        path, calls, lines = build_report(args.projects, args.out, not args.no_open)
+        path, calls, lines = build_report(args.projects, args.out, not args.no_open, args.days)
         log_line(f"完成：{path}（{calls} 次调用 / {lines} 行日志）")
         return 0
     except Exception:
