@@ -64,7 +64,7 @@ from ctypes import wintypes
 from html import escape as esc_html
 from pathlib import Path
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 APP_NAME = "wbtool"
 CLEAN_DAYS_DEFAULT = 30        # 「可清除」阈值（天）：闲置会话中只有全部数据都超过该天数的才清除，可用 --days 覆盖
 KEEP_RECENT_DAYS = 7           # 规则1：近 N 天内有过对话的会话，无论文件多旧都【永不清除】
@@ -529,6 +529,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
       </div>
     </div>
     <div class="right">
+      <button class="btn primary" id="btnClean" type="button">清除旧数据…</button>
       <div class="ranges" id="ranges">
         <button data-n="1">今天</button>
         <button data-n="7">近 7 天</button>
@@ -614,7 +615,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
     <div class="ph"><h2>数据清理</h2><div class="hint">近 7 天活跃会话受保护 · 只清除闲置且全量超 N 天的整文件 · 不随范围切换</div></div>
     <div class="mini3" id="cleanCards"></div>
     <div id="cleanBody"></div>
-    <button class="btn primary" id="btnClean" type="button">清除旧数据…</button>
     <div class="clean-warn" id="cleanWarn"></div>
     <div class="clean-foot" id="cleanFoot"></div>
   </div>
