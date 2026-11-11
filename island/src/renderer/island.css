@@ -1,0 +1,252 @@
+/* ============================================================================
+   island.css — 小米超级岛质感
+   · 窗口是透明矩形；视觉上的「胶囊 / 圆角矩形」完全由 #content 的 --h / --r 决定。
+   · --h、--r、--m、--de 由主进程弹簧引擎每帧通过 IPC 写入，与 setBounds 同一帧
+     —— 不撕裂。--m 是内容进度（0..1，带弹簧过冲），--de 是明细浮现进度。
+   · 液态玻璃质感（折射型模拟，透明窗口无法用系统背景模糊）：
+       1) 半透明玻璃基底 + 左上冷色 / 右下暖色环境反射（radial 高光）
+       2) 顶亮底暗玻璃棱边 + 左右冷暖色散描边，全部用 inset —— 透明窗口上
+          任何向外阴影都会在圆角外糊黑边
+       3) 顶缘曲面高光 + 对角流光带 + 内侧暗角，模拟玻璃厚度与折光
+   · compact / detail 两层绝对定位叠放，只改 opacity / transform / visibility，
+     不参与布局、不重排，形变期间文字不会左右抽搐。
+   ============================================================================ */
+:root {
+  --h: 52px;
+  --r: 26px;
+  --m: 0;                     /* 弹簧内容进度 0..1（主进程每帧下发） */
+  --de: 0;                    /* 明细浮现进度 0..1（m 的后段归一化） */
+  --ink: #f0f3f8;
+  --muted: #8b94a6;
+  --accent: #ff7a2f;          /* 小米橙：数字与强调色 */
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* html/body 绝不能 height:100%：高度由内容/变量决定，与窗口解耦 */
+html, body {
+  width: 100%;
+  height: auto;
+  background: transparent;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body {
+  font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+}
+
+#content {
+  position: relative;
+  width: 100%;
+  height: var(--h);
+  border-radius: var(--r);
+  /* 液态玻璃基底（折射型模拟，跨平台）：半透明深色玻璃体 + 左上冷色 /
+     右下暖色环境反射。不依赖系统级背景模糊 —— Win10/11、macOS、Linux 表现一致，
+     透明窗口的圆角外保持真透明，胶囊轮廓完美无残影 */
+  background:
+    radial-gradient(130% 200% at 18% -40%, rgba(122, 160, 235, 0.16), rgba(122, 160, 235, 0) 45%),
+    radial-gradient(90% 150% at 82% 120%, rgba(255, 122, 47, 0.08), rgba(255, 122, 47, 0) 55%),
+    linear-gradient(165deg, rgba(32, 40, 58, 0.78) 0%, rgba(13, 17, 26, 0.82) 55%, rgba(8, 10, 16, 0.85) 100%);
+  color: var(--ink);
+  overflow: hidden;
+  cursor: pointer;
+  /* 玻璃棱边：顶亮底暗（全用 inset —— 透明窗口上任何向外阴影都会在圆角外糊黑边），
+     左右各一丝冷暖色散描边，模拟玻璃折射的色差 */
+  box-shadow:
+    inset 0 0 0 1px rgba(165, 185, 230, 0.20),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+    inset 1px 0 0 rgba(130, 180, 255, 0.10),
+    inset -1px 0 0 rgba(255, 150, 90, 0.09),
+    inset 0 10px 22px -14px rgba(160, 190, 255, 0.16),
+    inset 0 -12px 26px -16px rgba(0, 0, 0, 0.55);
+}
+
+/* 顶缘曲面高光：一条椭圆镜面反光 + 线性渐变，模拟玻璃上缘的弯曲反光 */
+#content::before {
+  content: "";
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  top: 0;
+  height: 52%;
+  border-radius: inherit;
+  background:
+    radial-gradient(70% 130% at 50% -60%, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 85%);
+  pointer-events: none;
+}
+
+/* 玻璃厚度：对角流光带 + 内侧暗角（光在厚玻璃边缘向内折暗），叠在内容之上 */
+#content::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0) 28%, rgba(255, 255, 255, 0.045) 44%, rgba(255, 255, 255, 0) 58%),
+    radial-gradient(120% 160% at 50% 50%, rgba(0, 0, 0, 0) 62%, rgba(0, 0, 0, 0.30) 100%);
+  pointer-events: none;
+}
+
+/* 两层叠放：都不参与 #content 的布局计算 */
+.layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: 0 20px;
+  will-change: opacity, transform;
+}
+
+#compact {
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* 不设 bottom：高度由明细内容自然撑开，JS 测量值与窗口尺寸完全无关 */
+#detail {
+  top: 0;
+  padding-top: 11px;
+  padding-bottom: 11px;
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* ---------- 收起态 ---------- */
+#summary {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  white-space: nowrap;
+}
+#summary .k { color: #b9c1d2; font-weight: 500; }
+#summary .sep { color: #5a6380; margin: 0 6px; }
+/* tabular-nums + 固定宽度：刷新数字时长度不跳动，是「抽搐」的技术根因之一 */
+#summary .num {
+  display: inline-block;
+  min-width: 4.6ch;
+  text-align: right;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+#marquee {
+  position: relative;
+  margin-top: 3px;
+  height: 18px;
+  overflow: hidden;
+}
+#mqTrack {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 18px;
+  will-change: transform;
+}
+#mqTrack .label { color: var(--accent); margin-right: 6px; }
+#mqTrack .empty { color: #6f7892; }
+
+/* ---------- 展开态明细（不重复顶部摘要行）---------- */
+/* 错落浮入：每个 .stg 区块用同一个 --de 进度、不同的位移系数 --f，
+   同一帧数据驱动，先形变后内容、块与块依次落定 —— 超级岛的层次感 */
+.stg {
+  --f: 6px;
+  transform: translateY(calc((1 - var(--de)) * var(--f)));
+  will-change: transform;
+}
+.dTitle { --f: 5px; }
+.dGrid  { --f: 8px; }
+.dSub   { --f: 11px; }
+#alist  { --f: 14px; }
+.dFoot  { --f: 17px; }
+
+.dTitle {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  color: var(--accent);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.dStamp {
+  font-size: 10px;
+  font-weight: 500;
+  color: #6f7892;
+  font-variant-numeric: tabular-nums;
+}
+
+.dGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 22px;
+}
+.dCell {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #9aa4b8;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  white-space: nowrap;
+}
+.dCell b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.dCell b.accent { color: var(--accent); }
+
+.dSub {
+  margin: 10px 0 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  color: var(--accent);
+}
+#alist .item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  font-size: 11px;
+  color: #cdd3df;
+  padding: 3px 0;
+  white-space: nowrap;
+}
+#alist .item .nm { overflow: hidden; text-overflow: ellipsis; }
+#alist .item .mt {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.dFoot {
+  margin-top: 9px;
+  font-size: 10px;
+  letter-spacing: .2px;
+  color: #6f7892;
+}
+
+/* 系统「减弱动效」：主进程已把弹簧压成 1 帧，这里再兜底关掉一切过渡 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .layer, .stg { will-change: auto; }
+}

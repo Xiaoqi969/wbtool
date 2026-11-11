@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wbtool 灵动岛</title>
+  <link rel="stylesheet" href="island.css">
+</head>
+<body>
+  <div id="content">
+    <!-- 收起态层：顶部 Token / 积分 + 进行中对话走马灯。
+         展开态整层淡出并 visibility:hidden，彻底消除宽度变化时的文字抽搐。 -->
+    <div class="layer" id="compact">
+      <div id="summary">
+        <span class="k">Token</span> <span id="tok" class="num">0</span>
+        <span class="sep">·</span>
+        <span class="k">积分</span> <span id="cr" class="num">0.00</span>
+      </div>
+      <div id="marquee">
+        <div id="mqTrack"><span class="empty">当前无进行中的对话</span></div>
+      </div>
+    </div>
+
+    <!-- 展开态层：只显示明细，不重复顶部的 Token / 积分行。
+         .stg 各区块用 --de（弹簧内容进度）做错落浮入，同一帧数据驱动。 -->
+    <div class="layer" id="detail">
+      <div class="dTitle stg">
+        <span>今日用量明细</span>
+        <span class="dStamp" id="upd">--:--:--</span>
+      </div>
+      <div class="dGrid stg">
+        <div class="dCell"><span>输入</span><b id="din">0</b></div>
+        <div class="dCell"><span>输出</span><b id="dout">0</b></div>
+        <div class="dCell"><span>合计 Token</span><b id="dtot" class="accent">0</b></div>
+        <div class="dCell"><span>积分</span><b id="dcr" class="accent">0.00</b></div>
+      </div>
+      <div class="dSub stg">进行中对话 · <span id="acount">0</span></div>
+      <div id="alist" class="stg"></div>
+      <div class="dFoot stg">已扫描 <span id="files">0</span> 个日志文件 · 点击收起</div>
+    </div>
+  </div>
+  <script src="island.js"></script>
+</body>
+</html>

@@ -70,6 +70,8 @@ wbtool/
 **运行要求**：Windows 10/11，且本机安装过 WorkBuddy 并产生过会话记录。
 把 exe 放在只读目录（如 `C:\Program Files\`）也没问题，程序会自动把报告写到用户目录。
 
+**桌面端灵动岛（独立启动器，可选）**：除了 `wbtool.exe`，Release 还提供 `wbtool-island.exe`（便携单文件）与 `wbtool-island-portable.zip`（目录版，解压到新建的空文件夹后运行其中的 `wbtool-island.exe`）。它基于 **Electron（HTML/CSS 渲染）**，胶囊边缘/圆角真平滑、无锯齿；形变由**弹簧物理引擎**驱动（宽度/高度/内容进度三根独立弹簧，中途打断位置与速度连续），质感为纯 CSS 模拟的**液态玻璃**（折射色散 inset 描边 + 曲面高光，强调色小米橙），不依赖 Win11 Acrylic 等系统版本特性。双击它会在**屏幕顶部正中**常驻一个半透明胶囊，**每分钟**刷新一次：显示**今日 Token / 积分**，并以横向滚动方式轮流展示**正在进行中的对话**名称（多个会话依次轮播）。**左键点击胶囊**会以弹簧物理驱动的三段式丝滑形变「长大」成明细面板（小胶囊 → 横向铺开成扁胶囊 → 向下展开成圆角矩形，收起为精确逆过程，带轻微弹性回弹）；展开态**隐藏顶部 Token / 积分行，只显示明细**（今日输入/输出/合计 Token、积分、各进行中对话的 Token 与最后活跃时间），再点一次收回。**系统托盘图标右键**可显示/隐藏、`临时提到最前`、切换 `锁定置顶（始终最上层）` 以及退出：默认锁定置顶且任务栏无实例；取消勾选后背面的窗口就点得到了，任务栏会出现一个「wbtool 灵动岛」实例，点它即可把胶囊唤回最上层（「隐藏」只收起胶囊、托盘仍在，随时可再唤起）。`wbtool.exe` 的行为完全不变，两个启动器互不干扰。
+
 ---
 
 ## 三、从源码运行
@@ -231,13 +233,22 @@ python wb_usage_app.py --clean --mode backup --days N --yes    # 备份模式
 ## 九、打包
 
 ```bash
-python build.py            # 同时构建目录版 zip 与单文件版 exe（默认）
-python build.py onedir     # 只构建目录版
-python build.py onefile    # 只构建单文件版
+python build.py            # 默认 == all：wbtool 主程序 + 灵动岛一起构建
+python build.py onedir     # 只构建 wbtool 目录版 zip
+python build.py onefile    # 只构建 wbtool 单文件版 exe
+python build.py island     # 只构建灵动岛（需 Node.js + npm）
+python build.py all        # 显式构建全部
 ```
 
-产物输出到 `release/`（不进 Git）：`wbtool-portable.zip` 与 `wbtool.exe`。
-构建中间产物放在系统临时目录，结束后自动清理。详见 [build.py](build.py) 文件头。
+产物输出到 `release/`（不进 Git）：
+
+| 产物 | 说明 |
+|---|---|
+| `wbtool-portable.zip` / `wbtool.exe` | 主程序（Python + PyInstaller）目录版 / 单文件版 |
+| `wbtool-island.exe` | 灵动岛便携单文件，双击即用 |
+| `wbtool-island-portable.zip` | 灵动岛目录版；**压缩包顶层没有文件夹**，请先新建空文件夹再解压，然后运行其中的 `wbtool-island.exe` |
+
+灵动岛走 `npm install` + `npm run dist`（electron-builder），每次构建使用一个全新的 `release/_out-<时间戳>/` 空工作区（避免覆盖被系统进程锁住的旧 `.asar` 导致 `EBUSY`），脚本再把两个正式产物对齐命名后搬到 `release/` 根目录并清理工作区；主程序的构建中间产物放在系统临时目录，结束后自动清理。详见 [build.py](build.py) 文件头。
 
 ---
 
@@ -245,11 +256,12 @@ python build.py onefile    # 只构建单文件版
 
 | 文件 | 备注 |
 |---|---|
-| `wb_usage_app.py` | **主程序 / 唯一源码文件**。四段结构：数据扫描层（含 `scan_old_files` 两级删除范围）、`HTML_TEMPLATE` 报告模板（含「清除旧数据…」确认弹窗）、超期日志清理（只读预览 / 备份到 `wbtool_backup/` / 移入回收站，零第三方依赖）、入口逻辑与 CLI。文件头有完整说明。 |
-| `build.py` | **Windows 打包脚本**。支持 onedir / onefile 双模式，自动打 zip、输出体积对比。文件头有设计取舍说明。 |
+| `wb_usage_app.py` | **主程序 / 报告启动器源码**。四段结构：数据扫描层（含 `scan_old_files` 两级删除范围）、`HTML_TEMPLATE` 报告模板（含「清除旧数据…」确认弹窗）、超期日志清理（只读预览 / 备份到 `wbtool_backup/` / 移入回收站，零第三方依赖）、入口逻辑与 CLI。文件头有完整说明。 |
+| `island/` | **桌面端灵动岛工程（v1.2.0 新增，基于 Electron）**。`src/scanner.js` 增量扫描 jsonl（口径对齐 `wb_usage_app`）、`src/main.js` 主进程（无边框透明窗口 + 系统托盘/置顶锁定 + 单实例 + 每分钟扫描 + 弹簧物理形变引擎）、`src/renderer/` 胶囊 UI（HTML/CSS/JS，`--h`/`--r` 变量画圆角 + 裁剪区走马灯 + 明细网格 + 两层交叉淡入淡出 + 液态玻璃质感 + `--de` 错落浮入）。`package.json` 用 electron-builder 打包。 |
+| `build.py` | **Windows 打包脚本**。两条技术栈解耦：`wbtool` 用 PyInstaller（onedir/onefile），`wbtool-island` 调用 `npm` + electron-builder。可 `python build.py all` 一次构建全部，或 `python build.py island` 单独构建灵动岛。文件头有设计取舍说明。 |
 | `README.md` | **本文件**。项目介绍、下载运行、数据口径、数据清理、隐私说明、FAQ、文件清单。 |
 | `LICENSE` | **MIT 许可证全文**，Copyright (c) 2026 小柒。注意不含 `assets/` 图标的授权。 |
-| `CHANGELOG.md` | **版本变更记录**，当前 v1.1.1。 |
+| `CHANGELOG.md` | **版本变更记录**，当前 v1.2.0。 |
 | `CONTRIBUTING.md` | **贡献指南**：本地运行、代码结构、验证清单、隐私红线、提交规范。 |
 | `.gitignore` | **排除规则**：按「个人隐私数据 / 二进制程序 / 构建产物 / 缓存 / 编辑器」分组，每条带注释。 |
 | `assets/wbtool.ico` | **exe 图标**：WorkBuddy 官方 logo，11 种尺寸，供 `--icon` 使用。 |

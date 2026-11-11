@@ -30,6 +30,11 @@ release/
 .build/
 *.spec
 
+# ---- Electron 灵动岛：Node 依赖与构建暂存 ----
+# node_modules 有数百 MB 且含平台相关的 Electron 二进制，必须排除
+node_modules/
+.build-stale/
+
 # ---- Python 缓存 ----
 __pycache__/
 *.pyc
