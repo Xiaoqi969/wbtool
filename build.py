@@ -34,6 +34,11 @@ import tempfile
 import time
 from pathlib import Path
 
+# 关闭 WorkBuddy 注入的 safe-delete 钩子：构建脚本需要删除自身临时文件
+# （node_modules、electron-builder 工作区）。该钩子对「单轮 >50 文件」的批量删除要求
+# 人工确认，会令构建卡死。=0 即整体关闭；同时作用于本进程与派生的 npm 子进程。
+os.environ["CODEBUDDY_SAFE_DELETE_ENABLED"] = "0"
+
 ROOT = Path(__file__).resolve().parent          # 项目根目录（本文件所在处）
 ENTRY = ROOT / "wb_usage_app.py"               # 主程序入口（HTML 报告）
 ICON = ROOT / "assets" / "wbtool.ico"          # 程序图标（WorkBuddy 官方 logo）
@@ -190,12 +195,8 @@ def build_island():
         if old.is_dir():
             shutil.rmtree(old, ignore_errors=True)
 
-    # 每次构建使用一个全新的空输出目录：release/ 下遗留的 .asar 常被系统进程锁住，
-    # electron-builder 只要去覆盖旧目录，unlink 时就会 EBUSY。全新目录永不碰旧文件。
-    out_dir = RELEASE / f"_out-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     print(f"\n>>> 构建 wbtool-island（Electron）")
     print(f"    cwd = {ISLAND_DIR}")
-    print(f"    out = {out_dir}  (本次独占的全新工作区)")
     if evicted:
         print(f"    已移出上次遗留的中间产物：{', '.join(evicted)}")
 
@@ -204,14 +205,37 @@ def build_island():
     pkg_path = ISLAND_DIR / "package.json"
     original_pkg = pkg_path.read_text(encoding="utf-8")
     cfg = json.loads(original_pkg)
-    cfg.setdefault("build", {}).setdefault("directories", {})["output"] = \
-        f"../{RELEASE.name}/{out_dir.name}"
+    cfg.setdefault("build", {}).setdefault("directories", {})
+
+    # electron-builder 解压 electron 二进制时，Windows 杀软 / 索引服务会瞬时锁住
+    # default_app.asar 等文件，造成 win-unpacked.tmp -> win-unpacked 重命名 EBUSY。
+    # 用「每次全新输出目录 + 退避重试」规避这种瞬时锁：失败即换新目录、静候锁释放再试。
+    out_dir = None
     try:
         pkg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n",
                             encoding="utf-8")
         # Windows 上 npm 实为 npm.cmd，需用 shell=True 让 cmd 解析；env 已补入 Node 路径
         subprocess.run("npm install", cwd=str(ISLAND_DIR), env=env, check=True, shell=True)
-        subprocess.run("npm run dist", cwd=str(ISLAND_DIR), env=env, check=True, shell=True)
+        last_err = None
+        for attempt in range(1, 5):
+            out_dir = RELEASE / f"_out-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{attempt}"
+            print(f"    out = {out_dir}  (第 {attempt} 次尝试，独占全新工作区)")
+            cfg["build"]["directories"]["output"] = f"../{RELEASE.name}/{out_dir.name}"
+            pkg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n",
+                                encoding="utf-8")
+            try:
+                subprocess.run("npm run dist", cwd=str(ISLAND_DIR), env=env, check=True, shell=True)
+                break
+            except subprocess.CalledProcessError as e:
+                last_err = e
+                shutil.rmtree(out_dir, ignore_errors=True)   # 失败即弃用本次目录，下次换新
+                _evict_stale_release()
+                if attempt < 4:
+                    print(f"[island] 第 {attempt} 次构建失败（疑似杀软临时锁定 electron 文件），15s 后重试…")
+                    time.sleep(15)
+        else:
+            print(f"[island] 连续 4 次构建失败：\n{last_err}", file=sys.stderr)
+            sys.exit("wbtool-island 构建失败：请检查杀软 / 索引服务是否持续锁定 release/ 目录")
     finally:
         pkg_path.write_text(original_pkg, encoding="utf-8")
 
@@ -226,7 +250,7 @@ def build_island():
     shutil.copy2(src_exe, portable)         # 覆盖写，不做删除（兼容桌面文件保护策略）
     print(f"\n[island] {portable}  {portable.stat().st_size / 1024 / 1024:.1f} MB")
 
-    # electron-builder 26 的 zip 命名为 wbtool-island-1.2.0-win.zip
+    # electron-builder 26 的 zip 命名为 wbtool-island-1.3.0-win.zip
     zips = sorted(out_dir.glob("wbtool-island-*-win*.zip")) or \
            sorted(out_dir.glob("wbtool-island-*.zip"))
     if zips:

@@ -14,7 +14,7 @@ const PILL_H = 52;
 const clamp01 = t => Math.max(0, Math.min(1, t));
 
 let data = {
-  today: { token: 0, credit: 0, in: 0, out: 0 },
+  today: { token: 0, credit: 0, in: 0, out: 0, ratePerSec: 0 },
   active: [],
   files: 0,
   updated: '',
@@ -38,6 +38,11 @@ function fmtC(c) {
   if (c >= 1e3) return (c / 1e3).toFixed(1) + 'k';
   return c.toFixed(2);
 }
+function fmtRate(n) {
+  n = Math.round(Number(n) || 0);
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k/s';
+  return n + '/s';
+}
 function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
@@ -51,6 +56,8 @@ function render() {
   document.getElementById('dout').textContent = fmt(data.today.out);
   document.getElementById('dtot').textContent = fmt(data.today.token);
   document.getElementById('dcr').textContent = fmtC(data.today.credit);
+  document.getElementById('rate').textContent = fmtRate(data.today.ratePerSec);
+  document.getElementById('drate').textContent = fmtRate(data.today.ratePerSec);
   document.getElementById('acount').textContent = data.active.length;
   document.getElementById('files').textContent = data.files;
   document.getElementById('upd').textContent = data.updated;

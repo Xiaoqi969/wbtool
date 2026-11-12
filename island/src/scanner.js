@@ -55,6 +55,8 @@ function localClock(d) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+const RATE_WINDOW_MS = 60000;
+
 class Scanner {
   constructor(projectsDir) {
     this.root = projectsDir || defaultProjectsDir();
@@ -62,6 +64,9 @@ class Scanner {
     this.totals = {};           // day  -> { t, cr, in, out }
     this.sessionTokens = {};    // sid  -> { day: tokens }
     this.active = {};           // sid  -> { last(Date), title, proj }
+    this.startTime = Date.now(); // 灵岛进程启动时刻，用于排除历史日志（仅统计启动后的用量）
+    this.bootTokens = 0;         // 启动后新增的 token 总量（仅计 moment>=startTime）
+    this.flow = [];              // 滚动流速：{t: 事件时间戳(ms), dt: 该次新增 token} 序列
   }
 
   scanOnce() {
@@ -93,6 +98,8 @@ class Scanner {
     this.sessionTokens = {};
     this.active = {};
     this.files = {};
+    this.bootTokens = 0;
+    this.flow = [];
     this._walk(this.root, now);
   }
 
@@ -164,6 +171,11 @@ class Scanner {
       const ru = (pd.rawUsage && typeof pd.rawUsage === 'object') ? pd.rawUsage : {};
       const credit = parseFloat(num(ru.credit));
       this._addDay(day, nu.input, nu.output, nu.total, credit, sid);
+      // 滚动流速：只统计事件时间晚于灵岛启动时刻的 token（排除历史日志），并记入事件流
+      if (moment && moment.getTime() >= this.startTime) {
+        this.bootTokens += nu.total;
+        this.flow.push({ t: moment.getTime(), dt: nu.total });
+      }
     }
 
     if (sid) {
@@ -202,11 +214,24 @@ class Scanner {
       last: localClock(a.last),
     }));
     return {
-      today: { token: t.t, credit: t.cr, in: t.in, out: t.out },
+      today: { token: t.t, credit: t.cr, in: t.in, out: t.out, ratePerSec: this._ratePerSec(Date.now()) },
       active,
       files: Object.keys(this.files).length,
       updated: new Date().toTimeString().slice(0, 8),
     };
+  }
+
+  // 滚动流速（tok/s）：取最近 RATE_WINDOW_MS 内消耗的 token，除以窗口秒数。
+  // 用事件自身时间戳（moment）判断窗口归属，比「扫描时刻」更贴近真实消耗时点；
+  // 窗口之外且更早的条目定期裁剪，避免数组无限增长。
+  _ratePerSec(now) {
+    const cutoff = now - RATE_WINDOW_MS;
+    if (this.flow.length && this.flow[0].t < cutoff - RATE_WINDOW_MS) {
+      this.flow = this.flow.filter(e => e.t >= cutoff - RATE_WINDOW_MS);
+    }
+    let sum = 0;
+    for (const e of this.flow) if (e.t >= cutoff) sum += e.dt;
+    return sum / (RATE_WINDOW_MS / 1000);
   }
 }
 
@@ -218,12 +243,14 @@ if (require.main === module) {
   s.scanOnce();
   const t = s.today();
   console.log(JSON.stringify({
-    version: '1.2.0',
+    version: '1.3.0',
     today: localDay(new Date()),
     tokens: t.t,
     credit: Math.round(t.cr * 1000) / 1000,
     in: t.in,
     out: t.out,
+    bootTokens: s.bootTokens,
+    ratePerSec: s._ratePerSec(Date.now()),
     activeCount: s.activeList().length,
     active: s.activeList().map(a => ({ name: a.name, tokens: a.tokens, last: a.last.toISOString() })),
     files: Object.keys(s.files).length,

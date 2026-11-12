@@ -11,7 +11,7 @@
 //     展开时宽度弹簧更硬（先横向铺开）、高度弹簧更软（随后向下落下）；
 //     收起时反过来（先收高、再收宽）。
 //
-// 沿用 wbtool v1.2.0 的全部铁律：
+// 沿用 wbtool v1.3.0 的全部铁律：
 //   1) 只有两个合法终态尺寸：390×52 / 620×H，绝不反推当前窗口尺寸当目标。
 //   2) 屏幕中心只测一次；每帧 X = 固定中心 - 当前宽/2（绝对值），不累积漂移。
 //   3) 一次 setBounds 原子设定位置与尺寸；显式关闭系统窗口阴影。
@@ -26,7 +26,7 @@ const fs = require('fs');
 const { Scanner } = require('./scanner');
 
 const PROJECTS = process.env.WORKBUDDY_PROJECTS_DIR || undefined;
-const SCAN_MS = 60000;
+const SCAN_MS = 10000;
 
 const PILL_W = 390;
 const PILL_H = 52;
