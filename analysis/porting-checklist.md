@@ -229,7 +229,7 @@
 |---|---|---|
 | `island_qt/window.py` | 362 | 窗口本体（裁剪自 island.py） |
 | `island_qt/tray.py` | 99 | 托盘图标 + 四项菜单 |
-| `island_qt/ui/theme.py` | 281 | 整文件复制（+8 行 MIT 头），sha256 与源一致 |
+| `island_qt/ui/theme.py` | 279 | 整文件复制（273 行 + 6 行 MIT 头），sha256 与源一致 |
 | `island_qt/main.py` | 123 | 入口：单实例 + 托盘 + 扫描线程装配 |
 
 **踩到一个 DPI 坑（值得记）**：`WM_NCHITTEST` 的 `lParam` 是**物理像素**屏幕坐标，而 Qt 的几何全是逻辑像素。
@@ -270,7 +270,7 @@
 **动作**
 - 复制 `anim.py`（64 行，`Spring` 类：半隐式欧拉 + `dt` 钳制）
 - 从 `shape.py` 只取三个函数：`body_path()`（52 行）、`deform()`（108 行）、`edge_corners()`（42 行）
-  - **丢弃** `neck_path()` / `drip_path()`（拖拽吸边专用，161 / 220 行）
+  - **不调用** `neck_path()` / `drip_path()`（拖拽吸边专用，161 / 220 行）；两个函数**保留在文件里**（只删了调用），保持与上游逐行可比，见 `porting-baseline.md` §二
 - 弹簧参数直接用 wisland 实测值（`island.py` 383-384 / 436-437 / 570-571 行）：
   - 展开：`sw.to(w, 420, 0.62)`、`sh.to(h, 420, 0.62)` —— w/h 同参数，整体弹开 + 轻微过冲
   - 收起：`sw.to(w, 440, 0.60)`、`sh.to(h, 440, 0.60)`
