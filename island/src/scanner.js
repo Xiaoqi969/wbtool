@@ -55,7 +55,10 @@ function localClock(d) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-const RATE_WINDOW_MS = 60000;
+// 流速统计窗口。窗口要短，否则一次爆发会被摊平后在屏幕上挂满整分钟，
+// 看不出「此刻生成快不快」。15s 是实测下来既能立刻反映生成、又不会因
+// 工具调用停顿而频繁跳到 0 的折中值。
+const RATE_WINDOW_MS = 15000;
 
 class Scanner {
   constructor(projectsDir) {
@@ -124,7 +127,10 @@ class Scanner {
     if (nl === -1) { f.buf = Buffer.concat([f.buf, raw]); return; }
     const complete = Buffer.concat([f.buf, raw.subarray(0, nl + 1)]);
     f.buf = raw.subarray(nl + 1);
-    f.offset = size - raw.length + complete.length;
+    // 偏移永远停在文件末尾：末尾残行已存进 buf，下次从这里继续读新字节即可。
+    // 若按「已消费字节数」反推，残行长度会被重复计入，导致 offset 越界、
+    // 下一次扫描误判为「文件被截断」而白跑一次全量重扫。
+    f.offset = size;
 
     const text = complete.toString('utf8');
     for (const line of text.split('\n')) {
@@ -171,10 +177,11 @@ class Scanner {
       const ru = (pd.rawUsage && typeof pd.rawUsage === 'object') ? pd.rawUsage : {};
       const credit = parseFloat(num(ru.credit));
       this._addDay(day, nu.input, nu.output, nu.total, credit, sid);
-      // 滚动流速：只统计事件时间晚于灵岛启动时刻的 token（排除历史日志），并记入事件流
+      // 滚动流速：只统计事件时间晚于灵岛启动时刻的 output token（排除历史日志），
+      // 并记入事件流。只算 output 的原因见 _ratePerSec 的注释。
       if (moment && moment.getTime() >= this.startTime) {
         this.bootTokens += nu.total;
-        this.flow.push({ t: moment.getTime(), dt: nu.total });
+        this.flow.push({ t: moment.getTime(), dt: nu.output });
       }
     }
 
@@ -221,7 +228,13 @@ class Scanner {
     };
   }
 
-  // 滚动流速（tok/s）：取最近 RATE_WINDOW_MS 内消耗的 token，除以窗口秒数。
+  // 生成速度（tok/s）：取最近 RATE_WINDOW_MS 内的 output token，除以窗口秒数。
+  //
+  // 口径对齐 DeepSeek / ChatGPT / Claude 客户端的 tok/s —— 只算模型生成的 token。
+  // 不能把 total 也算进来：agent 每轮工具调用都要重放整个上下文（实测一条记录
+  // total=218k 里 output 只有 730，其余 217k 是 prompt，其中 21.7 万命中 KV cache），
+  // 那算出来的是「上下文吞吐」而不是生成速度，会高出两个数量级。
+  //
   // 用事件自身时间戳（moment）判断窗口归属，比「扫描时刻」更贴近真实消耗时点；
   // 窗口之外且更早的条目定期裁剪，避免数组无限增长。
   _ratePerSec(now) {

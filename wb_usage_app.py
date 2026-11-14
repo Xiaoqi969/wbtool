@@ -64,7 +64,16 @@ from ctypes import wintypes
 from html import escape as esc_html
 from pathlib import Path
 
-__version__ = "1.3.0"
+from scanlib import (
+    bump,
+    count_image_blocks,
+    default_projects_dir,
+    iter_jsonl,
+    to_line,
+    to_moment,
+)
+
+__version__ = "2.0.0"
 APP_NAME = "wbtool"
 CLEAN_DAYS_DEFAULT = 30        # 「可清除」阈值（天）：闲置会话中只有全部数据都超过该天数的才清除，可用 --days 覆盖
 KEEP_RECENT_DAYS = 7           # 规则1：近 N 天内有过对话的会话，无论文件多旧都【永不清除】
@@ -73,7 +82,8 @@ AUTHOR = "小柒"
 AUTHOR_URL = "https://xiaoqilucky.com"
 
 HOME = Path.home()
-PROJECTS_DIR = Path(os.environ.get("WORKBUDDY_PROJECTS_DIR") or (HOME / ".workbuddy" / "projects"))
+# 与灵动岛共用同一口径（scanlib.default_projects_dir），勿在本文件另行拼路径
+PROJECTS_DIR = default_projects_dir()
 
 MODEL_ALIAS = {
     "hy3": "混元 hy3",
@@ -104,57 +114,12 @@ BROWSER_COMMANDS = (
     "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "firefox",
 )
 
-IMAGE_TYPES = ("image_blob_ref", "input_image", "image")
-
 
 # ----------------------------------------------------------------------------
 # 数据扫描：只提取可展示的统计字段，不读取任何正文内容
+# 解析内核（norm_usage / num / bump / count_image_blocks / 逐行读取 / 时间戳
+# 单位判断）已抽到 scanlib.py，报表与灵动岛共用同一份实现，口径不会再分叉。
 # ----------------------------------------------------------------------------
-def norm_usage(u):
-    if not isinstance(u, dict):
-        return None
-    inp = u.get("input_tokens", u.get("inputTokens", 0)) or 0
-    out = u.get("output_tokens", u.get("outputTokens", 0)) or 0
-    tot = u.get("total_tokens", u.get("totalTokens", 0)) or 0
-    cache = u.get("cache_read_input_tokens", 0)
-    if not cache:
-        det = u.get("inputTokensDetails") or u.get("input_tokens_details") or []
-        if isinstance(det, list):
-            cache = sum(d.get("cached_tokens", 0) or 0 for d in det if isinstance(d, dict))
-    if tot == 0 and (inp or out):
-        tot = inp + out
-    return {"input": inp, "output": out, "total": tot, "cache": cache or 0}
-
-
-def bump(counter, key, amount=1):
-    if key is None:
-        return
-    counter[key] = counter.get(key, 0) + amount
-
-
-def num(v):
-    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
-
-
-def count_image_blocks(o):
-    """只统计浅层 content 列表里的图片类型标记，不读取任何图片/文本数据。"""
-    n = 0
-    for key in ("content", "rawContent"):
-        v = o.get(key)
-        if isinstance(v, list):
-            for b in v:
-                if isinstance(b, dict) and b.get("type") in IMAGE_TYPES:
-                    n += 1
-    msg = o.get("message")
-    if isinstance(msg, dict):
-        v = msg.get("content")
-        if isinstance(v, list):
-            for b in v:
-                if isinstance(b, dict) and b.get("type") in IMAGE_TYPES:
-                    n += 1
-    return n
-
-
 def scan_old_files(projects_dir=None, days=CLEAN_DAYS_DEFAULT):
     """只读：按「两级删除范围」找出可清除的 jsonl，绝不修改、移动或删除任何文件。
 
@@ -197,12 +162,8 @@ def scan_old_files(projects_dir=None, days=CLEAN_DAYS_DEFAULT):
                         continue
                     if not isinstance(o, dict):
                         continue
-                    ts = o.get("timestamp")
-                    if not isinstance(ts, (int, float)):
-                        continue
-                    try:
-                        moment = dt.datetime.fromtimestamp(ts / 1000 if ts > 1e11 else ts)
-                    except (OSError, ValueError, OverflowError):
+                    moment = to_moment(o.get("timestamp"))
+                    if moment is None:
                         continue
                     if last_day is None or moment.date() > last_day:
                         last_day = moment.date()
@@ -259,120 +220,84 @@ def collect_all(projects_dir=None, clean_days=CLEAN_DAYS_DEFAULT):
             except OSError:
                 mtime = None
             fallback_proj = os.path.basename(os.path.dirname(path))
-            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    total_lines += 1
-                    try:
-                        o = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(o, dict):
-                        continue
 
-                    ts = o.get("timestamp")
-                    if not isinstance(ts, (int, float)):
-                        ts = mtime
-                    if ts and ts > 1e11:
-                        moment = dt.datetime.fromtimestamp(ts / 1000)
-                    elif ts:
-                        moment = dt.datetime.fromtimestamp(ts)
-                    else:
-                        moment = None
-                    day = moment.strftime("%Y-%m-%d") if moment else "unknown"
-                    hour = moment.hour if moment else -1
+            # 逐行读取 / 时间戳单位判断交给 scanlib（与灵动岛同一份实现）
+            for row in iter_jsonl(path, mtime_ms=mtime):
+                total_lines += 1
+                o = row.data
+                if o is None:          # 坏行或非 dict：计入总行数，但不参与统计
+                    continue
+                moment = row.moment
+                day = row.day
+                hour = moment.hour if moment else -1
 
-                    typ = o.get("type") if isinstance(o.get("type"), str) else "unknown"
-                    sid = o.get("sessionId") if isinstance(o.get("sessionId"), str) else ""
-                    cwd = o.get("cwd") if isinstance(o.get("cwd"), str) else ""
-                    proj = cwd or fallback_proj
-                    pd = o.get("providerData") if isinstance(o.get("providerData"), dict) else {}
+                ln = to_line(row, fallback_proj)
+                typ, sid, cwd, proj, pd = ln.typ, ln.sid, ln.cwd, ln.proj, ln.pd
 
-                    # --- 按天行为聚合 ---
-                    d = daily.setdefault(day, {
-                        "tools": {}, "types": {}, "status": {}, "hours": {},
-                        "images": 0, "reasoning": 0, "snapshots": 0,
-                        "genCredit": 0.0, "genEvents": 0, "lines": 0,
+                # --- 按天行为聚合 ---
+                d = daily.setdefault(day, {
+                    "tools": {}, "types": {}, "status": {}, "hours": {},
+                    "images": 0, "reasoning": 0, "snapshots": 0,
+                    "genCredit": 0.0, "genEvents": 0, "lines": 0,
+                })
+                d["lines"] += 1
+                bump(d["types"], typ)
+                if hour >= 0:
+                    bump(d["hours"], str(hour))
+                st = o.get("status")
+                if isinstance(st, str):
+                    bump(d["status"], st)
+                if typ == "function_call":
+                    nm = o.get("name")
+                    if isinstance(nm, str) and len(nm) < 80:
+                        bump(d["tools"], nm)
+                if typ == "reasoning":
+                    d["reasoning"] += 1
+                if typ == "file-history-snapshot":
+                    d["snapshots"] += 1
+                d["images"] += count_image_blocks(o)
+
+                # --- 会话元信息 ---
+                if sid:
+                    s = sessions.setdefault(sid, {
+                        "id": sid, "title": "", "cwd": proj,
+                        "first": day, "last": day, "lines": 0,
                     })
-                    d["lines"] += 1
-                    bump(d["types"], typ)
-                    if hour >= 0:
-                        bump(d["hours"], str(hour))
-                    st = o.get("status")
-                    if isinstance(st, str):
-                        bump(d["status"], st)
-                    if typ == "function_call":
-                        nm = o.get("name")
-                        if isinstance(nm, str) and len(nm) < 80:
-                            bump(d["tools"], nm)
-                    if typ == "reasoning":
-                        d["reasoning"] += 1
-                    if typ == "file-history-snapshot":
-                        d["snapshots"] += 1
-                    d["images"] += count_image_blocks(o)
+                    s["lines"] += 1
+                    # 真实工作目录优先：会话首行可能缺 cwd，后续行补上
+                    if cwd and ":" in cwd and ":" not in s["cwd"]:
+                        s["cwd"] = cwd
+                    if day != "unknown":
+                        if s["first"] == "unknown" or day < s["first"]:
+                            s["first"] = day
+                        if day > s["last"]:
+                            s["last"] = day
+                    if not s["title"] and ln.title:
+                        s["title"] = ln.title[:80]
 
-                    # --- 会话元信息 ---
-                    if sid:
-                        s = sessions.setdefault(sid, {
-                            "id": sid, "title": "", "cwd": proj,
-                            "first": day, "last": day, "lines": 0,
-                        })
-                        s["lines"] += 1
-                        # 真实工作目录优先：会话首行可能缺 cwd，后续行补上
-                        if cwd and ":" in cwd and ":" not in s["cwd"]:
-                            s["cwd"] = cwd
-                        if day != "unknown":
-                            if s["first"] == "unknown" or day < s["first"]:
-                                s["first"] = day
-                            if day > s["last"]:
-                                s["last"] = day
-                        if not s["title"] and isinstance(o.get("aiTitle"), str):
-                            s["title"] = o["aiTitle"][:80]
+                # --- 生成工具独立积分（图片生成等） ---
+                if typ == "credit-usage":
+                    amt = pd.get("credit")
+                    if isinstance(amt, (int, float)):
+                        amt = float(amt)
+                        d["genCredit"] += amt
+                        d["genEvents"] += 1
+                        src = pd.get("source") if isinstance(pd.get("source"), str) else ""
+                        gen_credit.append({"d": day, "a": amt, "src": src})
 
-                    # --- 生成工具独立积分（图片生成等） ---
-                    if typ == "credit-usage":
-                        amt = pd.get("credit")
-                        if isinstance(amt, (int, float)):
-                            amt = float(amt)
-                            d["genCredit"] += amt
-                            d["genEvents"] += 1
-                            src = pd.get("source") if isinstance(pd.get("source"), str) else ""
-                            gen_credit.append({"d": day, "a": amt, "src": src})
+                # --- LLM 调用记录 ---
+                nu = ln.nu
+                if not nu:
+                    continue
+                if ln.quota:
+                    quota_latest[ln.quota["model"]] = ln.quota
 
-                    # --- LLM 调用记录 ---
-                    msg = o.get("message") if isinstance(o.get("message"), dict) else {}
-                    usage = msg.get("usage") or pd.get("usage")
-                    nu = norm_usage(usage)
-                    if not nu:
-                        continue
-                    ru = pd.get("rawUsage") if isinstance(pd.get("rawUsage"), dict) else {}
-                    credit = float(num(ru.get("credit")))
-                    original = float(num(ru.get("original_credit")))
-                    thinking = num(ru.get("completion_thinking_tokens"))
-                    if not thinking:
-                        det = ru.get("completion_tokens_details")
-                        if isinstance(det, dict):
-                            thinking = num(det.get("reasoning_tokens"))
-                    miss = num(ru.get("prompt_cache_miss_tokens"))
-                    hit = num(ru.get("prompt_cache_hit_tokens")) or nu["cache"]
-                    model = pd.get("model") if isinstance(pd.get("model"), str) else "unknown"
-
-                    q = ru.get("quota")
-                    if isinstance(q, dict) and isinstance(q.get("model"), str):
-                        quota_latest[q["model"]] = {
-                            "model": q["model"],
-                            "percent": num(q.get("percent")),
-                            "resetAt": q.get("reset_at") if isinstance(q.get("reset_at"), str) else "",
-                        }
-
-                    records.append({
-                        "d": day, "h": hour, "m": model, "p": proj, "s": sid,
-                        "i": nu["input"], "o": nu["output"], "t": nu["total"],
-                        "c": nu["cache"], "cm": miss, "ch": hit,
-                        "th": thinking, "cr": credit, "oc": original,
-                    })
+                records.append({
+                    "d": day, "h": hour, "m": ln.model, "p": proj, "s": sid,
+                    "i": nu["input"], "o": nu["output"], "t": nu["total"],
+                    "c": nu["cache"], "cm": ln.miss, "ch": ln.hit,
+                    "th": ln.thinking, "cr": ln.credit, "oc": ln.original,
+                })
 
     sessions_out = []
     for s in sessions.values():

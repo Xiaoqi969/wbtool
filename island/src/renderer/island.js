@@ -157,14 +157,59 @@ function measureDetailH() {
   return Math.max(PILL_H, Math.ceil(d.getBoundingClientRect().height) + 2);
 }
 
-// ---------- 点击：支持动画中途反向打断（位置与速度都从当前值续上）----------
+// ---------- 点击 / 拖拽：同一颗胶囊，位移<4px 视为点击，否则视为拖拽 ----------
 function toggle() {
   expanded = !expanded;
   const h = expanded ? measureDetailH() : PILL_H;
   if (expanded) lastDetailH = h;
   api.requestResize(expanded, h);
 }
-document.getElementById('content').addEventListener('click', toggle);
+
+const DRAG_THRESHOLD = 4;      // px：超过即判定为拖拽
+let pointerDown = false;
+let dragging = false;
+let startSX = 0, startSY = 0;
+
+const contentEl = document.getElementById('content');
+
+contentEl.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;   // 只处理左键
+  pointerDown = true;
+  dragging = false;
+  startSX = e.screenX;
+  startSY = e.screenY;
+  e.preventDefault();
+});
+
+// 用 window 监听，保证鼠标移出小窗口后仍能继续拖拽 / 正确收尾
+window.addEventListener('mousemove', e => {
+  if (!pointerDown) return;
+  const dx = e.screenX - startSX;
+  const dy = e.screenY - startSY;
+  if (!dragging && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+    dragging = true;
+    api.dragStart();            // 主进程记录按下瞬间窗口位置
+  }
+  if (dragging) api.dragMove(dx, dy);   // 逐帧把窗口移到位
+});
+
+window.addEventListener('mouseup', e => {
+  if (!pointerDown) return;
+  pointerDown = false;
+  if (dragging) {
+    dragging = false;
+    api.dragEnd();              // 结束拖拽 -> 记住位置
+  } else {
+    toggle();                   // 没位移 -> 当作点击，展开/收起
+  }
+});
+
+// 失焦兜底：万一收不到 mouseup，避免卡在 dragging
+window.addEventListener('blur', () => {
+  if (pointerDown && dragging) { dragging = false; api.dragEnd(); }
+  pointerDown = false;
+  dragging = false;
+});
 
 // ---------- IPC ----------
 api.onFrame(applyMorph);

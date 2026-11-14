@@ -5,24 +5,34 @@
 
 两个启动器、两条独立技术栈（刻意解耦，互不干扰）：
   1) wbtool 主程序（HTML 报告）：Python + PyInstaller，零第三方运行时依赖。
-  2) wbtool-island 灵动岛：Electron（HTML/CSS/JS 渲染，胶囊边缘与动效达到 Daozai 级精致度）。
+  2) 灵动岛：2.0.0 起统一为 PySide6（island_qt/）。旧 Electron 工程（island/）只在显式
+     `build.py island` 时构建、产物名带 `-legacy`，用于回退比对，不再进默认流程。
 
 产物（均写入 release/ 目录，该目录不进 git）：
   release/wbtool.exe                  -> 单文件版（HTML 报告启动器）
   release/wbtool-portable.zip         -> 目录版压缩包，解压后运行 wbtool/wbtool.exe
-  release/wbtool-island.exe           -> 单文件版（桌面灵动岛启动器，Electron portable）
-  release/wbtool-island-portable.zip  -> 目录版压缩包；顶层无目录，先建空文件夹再解压，
-                                        运行其中的 wbtool-island.exe
+  release/wbtool-island.exe           -> 单文件版（桌面灵动岛，PySide6）
+  release/wbtool-island-portable.zip  -> 目录版压缩包；解压后运行 wbtool-island/wbtool-island.exe
+  release/wbtool-island-legacy.exe    -> 旧 Electron 版（仅 `build.py island` 产出，弃用）
+  release/wbtool-island-legacy-portable.zip
 
 electron-builder 的原始输出在 release/_out-<时间戳>/（本次构建独占的全新空工作区），
 build.py 会把 exe / zip 对齐命名后搬到 release/ 根目录，并清理工作区里的中间产物。
 每次都用全新空目录是必需的：release/ 下遗留的 .asar 常被系统进程锁住，
 electron-builder 只要去覆盖旧输出目录，unlink 时就会 EBUSY 导致打包失败。
 
+用法：
+  python build.py              # 主程序 + 灵动岛（默认；两者都走 PyInstaller，灵动岛额外需要 PySide6）
+  python build.py island_qt    # 只打灵动岛（exe + portable.zip）
+  python build.py island       # 只打旧 Electron 版（需 Node.js，产物名带 -legacy）
+
 前置条件：
-  - Windows + Python 3.8~3.13 + pip install pyinstaller   （仅 wbtool 主程序需要）
-  - Node.js + npm（仅 wbtool-island 需要；构建时通过 npm 安装 electron / electron-builder）
+  - Windows + Python 3.8~3.13 + pip install pyinstaller   （主程序与灵动岛都需要）
+  - Node.js + npm（仅 legacy Electron 版需要；构建时通过 npm 安装 electron / electron-builder）
   - 国内网络建议设置 ELECTRON_MIRROR 以加速 Electron 二进制下载（见 build_island）
+  - 打灵动岛必须用**装了 PySide6 的那个解释器**执行本脚本：
+        D:/python/python310/python.exe build.py island_qt
+    pyinstaller_cmd() 优先用当前解释器，就是为了避免 PATH 上的 pyinstaller 属于另一套 Python。
 """
 import argparse
 import json
@@ -47,20 +57,50 @@ RELEASE = ROOT / "release"                     # 最终产物目录
 ISLAND_OUT = RELEASE / "_electron-out"         # electron-builder 原始输出（与最终产物分层）
 APP_NAME = "wbtool"                            # 主程序产物名称
 
+# PySide6 灵动岛（B8）：入口在子目录里、依赖父目录的 scanlib，打包参数与主程序不同
+ISLAND_QT_DIR = ROOT / "island_qt"
+ISLAND_QT_ENTRY = ISLAND_QT_DIR / "main.py"
+ISLAND_QT_NAME = "wbtool-island"               # 2.0.0 起，正式版名字归 PySide6 版
+ISLAND_LEGACY_NAME = "wbtool-island-legacy"    # 旧 Electron 版改名保留，可随时回退比对
+
 # 主程序不依赖 GUI，可排除 tkinter
 EXCLUDES = ("tkinter", "unittest", "pydoc", "doctest")
 
+# 灵动岛只用到 QtCore / QtGui / QtWidgets / QtNetwork 四个模块。
+# 其余 Qt 模块（Qml/Quick 全家、Designer/UiTools/Help/Test、Sql、PrintSupport、Svg、
+# OpenGL、DBus、Xml、Concurrent）一行代码都不碰，留着白占体积 —— 尤其 Qml+Quick
+# 光 DLL 就十几 MB。排除列表按「装了但没用」逐条列，不写通配：PyInstaller 的
+# --exclude-module 只认精确模块名（或包前缀），通配会把 QtCore 之类一起带走。
+QT_EXCLUDES = EXCLUDES + (
+    "PySide6.QtQml", "PySide6.QtQmlFeatures", "PySide6.QtQuick",
+    "PySide6.QtQuickControls2", "PySide6.QtQuickTest", "PySide6.QtQuickWidgets",
+    "PySide6.QtDesigner", "PySide6.QtUiTools", "PySide6.QtHelp", "PySide6.QtTest",
+    "PySide6.QtSql", "PySide6.QtPrintSupport", "PySide6.QtSvg", "PySide6.QtSvgWidgets",
+    "PySide6.QtOpenGL", "PySide6.QtOpenGLWidgets", "PySide6.QtDBus",
+    "PySide6.QtXml", "PySide6.QtConcurrent", "PySide6.QtLabsStyleKit",
+    # 完整版 / 其它发行版才有的重型模块：装没装上都声明排除，避免换机器打爆体积
+    "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineQuick",
+    "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets", "PySide6.QtCharts",
+    "PySide6.QtDataVisualization", "PySide6.Qt3DCore", "PySide6.Qt3DRender",
+    "PySide6.QtPdf", "PySide6.QtPdfWidgets", "PySide6.QtBluetooth", "PySide6.QtPositioning",
+)
+
 
 def pyinstaller_cmd():
-    """自动定位 PyInstaller：优先 PATH，其次当前解释器的 -m 方式，最后 Scripts 目录。"""
-    found = shutil.which("pyinstaller")
-    if found:
-        return [found]
+    """自动定位 PyInstaller：优先**当前解释器**，其次 PATH，最后 Scripts 目录。
+
+    顺序不能反：PATH 上的 pyinstaller.exe 可能属于另一个 Python（本机就有 3.13 与 3.10
+    两套），用错了解释器打出来的包缺 PySide6，双击才报 ModuleNotFoundError。
+    用当前解释器跑，`python build.py` 用的是哪个 Python，打出来就是哪个。
+    """
     try:
-        import PyInstaller  # noqa: F401  （仅用于探测是否安装在本解释器）
+        import PyInstaller  # noqa: F401  （仅用于探测是否装在本解释器）
         return [sys.executable, "-m", "PyInstaller"]
     except ImportError:
         pass
+    found = shutil.which("pyinstaller")
+    if found:
+        return [found]
     for c in (Path(sys.executable).parent / "Scripts" / "pyinstaller.exe",
               Path(sys.executable).parent / "pyinstaller.exe"):
         if c.is_file():
@@ -68,8 +108,8 @@ def pyinstaller_cmd():
     sys.exit("未找到 PyInstaller。请先执行：pip install pyinstaller")
 
 
-def common_args(work, spec, mode, dist, entry, app_name, excludes):
-    """生成两种模式共用的 PyInstaller 参数。"""
+def common_args(work, spec, mode, dist, entry, app_name, excludes, extra=()):
+    """生成两种模式共用的 PyInstaller 参数。`extra` 用于子项目特有的 --paths/--add-data。"""
     args = pyinstaller_cmd() + [
         "--noconfirm",
         "--windowed",                 # 无黑框控制台（stdout 由主程序重定向到日志）
@@ -82,24 +122,25 @@ def common_args(work, spec, mode, dist, entry, app_name, excludes):
     ]
     for m in excludes:
         args += ["--exclude-module", m]
+    args += list(extra)
     args.append(str(entry))
     return args
 
 
-def run_build(mode, tmp, entry, app_name, excludes):
+def run_build(mode, tmp, entry, app_name, excludes, extra=()):
     """执行一次打包；中间产物放在临时目录，避免污染项目目录。"""
     dist = tmp / ("dist_" + mode + "_" + app_name)
     work = tmp / ("work_" + mode + "_" + app_name)
     spec = tmp / ("spec_" + mode + "_" + app_name)
-    cmd = common_args(work, spec, mode, dist, entry, app_name, excludes)
+    cmd = common_args(work, spec, mode, dist, entry, app_name, excludes, extra)
     print(f"\n>>> 构建 {mode} 版：{app_name}\n    {' '.join(cmd)}\n")
     subprocess.run(cmd, cwd=str(ROOT), check=True)
     return dist
 
 
-def build_portable(tmp, entry, app_name, excludes):
+def build_portable(tmp, entry, app_name, excludes, extra=()):
     """目录版：把 PyInstaller 输出的整个文件夹打成 zip。"""
-    dist = run_build("onedir", tmp, entry, app_name, excludes)
+    dist = run_build("onedir", tmp, entry, app_name, excludes, extra)
     folder = dist / app_name
     exe = folder / (app_name + ".exe")
     if not exe.is_file():
@@ -113,9 +154,9 @@ def build_portable(tmp, entry, app_name, excludes):
     return Path(archive)
 
 
-def build_single(tmp, entry, app_name, excludes):
+def build_single(tmp, entry, app_name, excludes, extra=()):
     """单文件版：复制 exe 到 release 根目录。"""
-    dist = run_build("onefile", tmp, entry, app_name, excludes)
+    dist = run_build("onefile", tmp, entry, app_name, excludes, extra)
     src = dist / (app_name + ".exe")
     if not src.is_file():
         sys.exit(f"单文件版构建失败：未找到 {src}")
@@ -123,6 +164,34 @@ def build_single(tmp, entry, app_name, excludes):
     shutil.copy2(src, dst)         # 覆盖写，不做删除（兼容桌面文件保护策略）
     print(f"\n[single] {dst}  {dst.stat().st_size / 1024 / 1024:.1f} MB")
     return dst
+
+
+def build_island_qt(tmp):
+    """PySide6 灵动岛：单文件 exe + 目录版 zip，命名与旧 Electron 版区分。
+
+    三个容易漏的打包细节：
+      1. `--paths` 要同时给 ROOT 与 island_qt —— 入口 import 的是 `prefs`/`window`
+         （同目录）与 `scanlib`（父目录），PyInstaller 静态分析得能找到。
+      2. `--add-data assets;assets` —— tray.py 用 `Path(__file__).parent.parent/assets/wbtool.ico`，
+         冻结后 `__file__` 在 `_MEIPASS/island_qt/`，图标必须落在 `_MEIPASS/assets/`。
+      3. `--windowed` —— 无控制台；启动日志由 main.py 在冻结态重定向到
+         `%LOCALAPPDATA%/wbtool/island-qt.log`，否则 --self-test 的输出没地方看。
+    """
+    if not ISLAND_QT_ENTRY.is_file():
+        sys.exit(f"缺少灵动岛入口：{ISLAND_QT_ENTRY}")
+    extra = [
+        "--paths", str(ROOT),
+        "--paths", str(ISLAND_QT_DIR),
+        # Windows 的 --add-data 分隔符是 ';'
+        "--add-data", f"{ICON};assets",
+        # PySide6 的插件由 PyInstaller 自带 hook 收集（platforms / styles / imageformats 等），
+        # 这里额外显式声明平台插件，避免换 PyInstaller 版本时 hook 行为变化把自己坑了
+        "--hidden-import", "PySide6.QtNetwork",
+    ]
+    print(f"\n>>> 构建 {ISLAND_QT_NAME}（PySide6）")
+    exe = build_single(tmp, ISLAND_QT_ENTRY, ISLAND_QT_NAME, QT_EXCLUDES, extra)
+    zip_path = build_portable(tmp, ISLAND_QT_ENTRY, ISLAND_QT_NAME, QT_EXCLUDES, extra)
+    return exe, zip_path
 
 
 # ---------------------------------------------------------------------------
@@ -239,22 +308,23 @@ def build_island():
     finally:
         pkg_path.write_text(original_pkg, encoding="utf-8")
 
-    # 对齐命名：portable -> release/wbtool-island.exe；zip -> release/wbtool-island-portable.zip
+    # 对齐命名：portable -> release/wbtool-island-legacy.exe；zip -> ...-legacy-portable.zip
+    # 2.0.0 起正式产物名归 PySide6 版，Electron 版降级为 legacy（保留构建能力以便回退比对）
     src_exe = out_dir / "wbtool-island.exe"
     if not src_exe.is_file():
         cands = sorted(out_dir.glob("wbtool-island*.exe"))
         if not cands:
             sys.exit(f"构建未完成：{out_dir} 中没有 portable exe")
         src_exe = cands[-1]
-    portable = RELEASE / "wbtool-island.exe"
+    portable = RELEASE / (ISLAND_LEGACY_NAME + ".exe")
     shutil.copy2(src_exe, portable)         # 覆盖写，不做删除（兼容桌面文件保护策略）
-    print(f"\n[island] {portable}  {portable.stat().st_size / 1024 / 1024:.1f} MB")
+    print(f"\n[island-legacy] {portable}  {portable.stat().st_size / 1024 / 1024:.1f} MB")
 
     # electron-builder 26 的 zip 命名为 wbtool-island-1.3.0-win.zip
     zips = sorted(out_dir.glob("wbtool-island-*-win*.zip")) or \
            sorted(out_dir.glob("wbtool-island-*.zip"))
     if zips:
-        dst = RELEASE / "wbtool-island-portable.zip"
+        dst = RELEASE / (ISLAND_LEGACY_NAME + "-portable.zip")
         if dst.exists() or dst.is_symlink():
             dst.unlink()
         shutil.move(str(zips[-1]), str(dst))
@@ -274,9 +344,10 @@ def main():
         description="wbtool 打包脚本：生成 Windows 目录版(zip) 与单文件版(exe)",
     )
     ap.add_argument("mode", nargs="?", default="all",
-                    choices=("all", "onedir", "onefile", "island"),
-                    help="all=wbtool+island 都构建（默认）；onedir/onefile=仅 wbtool 对应版本；"
-                         "island=仅构建 wbtool-island（Electron）")
+                    choices=("all", "onedir", "onefile", "island", "island_qt"),
+                    help="all=wbtool + 灵动岛（默认）；onedir/onefile=仅 wbtool 对应版本；"
+                         "island_qt=仅构建灵动岛（PySide6，出 exe + portable.zip）；"
+                         "island=仅构建旧 Electron 版（已弃用，产物名带 -legacy）")
     args = ap.parse_args()
 
     if os.name != "nt":
@@ -285,8 +356,10 @@ def main():
         sys.exit(f"缺少必要文件：{ENTRY}")
     if not ICON.is_file():
         sys.exit(f"缺少必要文件：{ICON}")
-    if args.mode in ("all", "island") and not ISLAND_DIR.is_dir():
+    if args.mode == "island" and not ISLAND_DIR.is_dir():
         sys.exit(f"缺少灵动岛工程目录：{ISLAND_DIR}")
+    if args.mode in ("all", "island_qt") and not ISLAND_QT_ENTRY.is_file():
+        sys.exit(f"缺少灵动岛入口：{ISLAND_QT_ENTRY}")
     RELEASE.mkdir(exist_ok=True)
 
     # 中间产物放到临时目录，构建结束自动清理；不写入项目目录，也不触碰任何个人文件。
@@ -298,8 +371,11 @@ def main():
             out.append(build_portable(tmp, ENTRY, APP_NAME, EXCLUDES))
         if args.mode in ("all", "onefile"):
             out.append(build_single(tmp, ENTRY, APP_NAME, EXCLUDES))
-        # wbtool-island 灵动岛（Electron）
-        if args.mode in ("all", "island"):
+        # 灵动岛（PySide6）：2.0.0 起是正式产物，跟随 all 一起出包
+        if args.mode in ("all", "island_qt"):
+            out.extend(build_island_qt(tmp))
+        # 旧 Electron 版：已弃用，仅在显式请求时构建（产物名带 -legacy）
+        if args.mode == "island":
             out.append(build_island())
     print("\n=== 构建完成 ===")
     for p in out:

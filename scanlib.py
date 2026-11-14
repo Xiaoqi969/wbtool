@@ -1,0 +1,310 @@
+# -*- coding: utf-8 -*-
+"""scanlib.py — WorkBuddy 会话 jsonl 的共享解析内核。
+
+为什么存在
+    wbtool 有两处消费同一批 jsonl：报表（wb_usage_app.py）和灵动岛
+    （island_qt/scan_service.py）。此前各写一套解析，口径靠注释「严格对齐」维持。
+    本模块把「读文件 / 判时间戳单位 / 抽可展示字段」收敛成唯一实现，两边共用。
+
+设计约束
+    1. 纯标准库、零第三方依赖（PyInstaller 不会因此多打东西）
+    2. 只读：永不修改、移动或写入任何日志文件
+    3. 只提取可展示的统计字段，不保留正文内容
+
+口径（与 island/src/scanner.js 严格对齐；改动请同步两边）
+    - 时间戳：>1e11 视为毫秒，否则秒；本地时间，与 HTML 报告一致
+    - Token：usage 经 norm_usage 拆出 input/output/total
+    - 积分：providerData.rawUsage.credit（LLM 调用行）+ type=="credit-usage" 事件
+    - 会话名：aiTitle，取不到回落到 cwd / "会话"
+    - 进行中：最后活动在 ACTIVE_WINDOW_MIN 分钟内
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+from pathlib import Path
+from typing import Dict, Iterator, List, NamedTuple, Optional, Tuple
+
+# ----------------------------------------------------------------------------
+# 常量
+# ----------------------------------------------------------------------------
+ACTIVE_WINDOW_MIN = 5           # 分钟内有活动算「进行中」
+# 流速统计窗口。窗口要短，否则一次爆发会被摊平后在屏幕上挂满整分钟，
+# 看不出「此刻生成快不快」。15s 是实测下来既能立刻反映生成、又不会因
+# 工具调用停顿而频繁跳到 0 的折中值。
+RATE_WINDOW_MS = 15_000
+MS_THRESHOLD = 1e11             # 大于此值视为毫秒时间戳
+UNKNOWN_DAY = "unknown"         # 取不到时间戳的桶名
+IMAGE_TYPES = ("image_blob_ref", "input_image", "image")
+
+
+def default_projects_dir() -> Path:
+    """会话日志根目录：WORKBUDDY_PROJECTS_DIR 优先，否则 ~/.workbuddy/projects。"""
+    env = os.environ.get("WORKBUDDY_PROJECTS_DIR")
+    return Path(env) if env else Path.home() / ".workbuddy" / "projects"
+
+
+# ----------------------------------------------------------------------------
+# 字段归一
+# ----------------------------------------------------------------------------
+def num(v):
+    """把非数值统一成 0。bool 是 int 的子类，这里必须排除，否则 True 会变成 1。"""
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+
+
+def bump(counter: dict, key, amount=1) -> None:
+    if key is None:
+        return
+    counter[key] = counter.get(key, 0) + amount
+
+
+def norm_usage(u) -> Optional[dict]:
+    """把各行五花八门的 usage 字段规整成 {input, output, total, cache}。
+
+    兼容两套命名（snake_case / camelCase），total 缺失时用 input+output 兜底，
+    cache 优先取 cache_read_input_tokens，取不到再从 inputTokensDetails 累加。
+    """
+    if not isinstance(u, dict):
+        return None
+    inp = u.get("input_tokens", u.get("inputTokens", 0)) or 0
+    out = u.get("output_tokens", u.get("outputTokens", 0)) or 0
+    tot = u.get("total_tokens", u.get("totalTokens", 0)) or 0
+    cache = u.get("cache_read_input_tokens", 0)
+    if not cache:
+        det = u.get("inputTokensDetails") or u.get("input_tokens_details") or []
+        if isinstance(det, list):
+            cache = sum(d.get("cached_tokens", 0) or 0 for d in det if isinstance(d, dict))
+    if tot == 0 and (inp or out):
+        tot = inp + out
+    return {"input": inp, "output": out, "total": tot, "cache": cache or 0}
+
+
+def count_image_blocks(o: dict) -> int:
+    """只统计浅层 content 列表里的图片类型标记，不读取任何图片/文本数据。"""
+    n = 0
+    for key in ("content", "rawContent"):
+        v = o.get(key)
+        if isinstance(v, list):
+            for b in v:
+                if isinstance(b, dict) and b.get("type") in IMAGE_TYPES:
+                    n += 1
+    msg = o.get("message")
+    if isinstance(msg, dict):
+        v = msg.get("content")
+        if isinstance(v, list):
+            for b in v:
+                if isinstance(b, dict) and b.get("type") in IMAGE_TYPES:
+                    n += 1
+    return n
+
+
+# ----------------------------------------------------------------------------
+# 时间戳
+# ----------------------------------------------------------------------------
+def to_moment(ts, mtime_ms=None) -> Optional[dt.datetime]:
+    """把 timestamp 字段转成本地 datetime。
+
+    mtime_ms：行内没有可用时间戳时是否回落到文件修改时间。
+        报表传文件 mtime（沿用历史行为，让缺时间戳的行也归到当天）；
+        灵动岛传 None（与 scanner.js 一致，这类行归入 unknown）。
+    """
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        ts = mtime_ms
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool) or not ts:
+        return None
+    try:
+        return dt.datetime.fromtimestamp(ts / 1000 if ts > MS_THRESHOLD else ts)
+    except (OSError, ValueError, OverflowError):
+        return None
+
+
+def day_of(moment: Optional[dt.datetime]) -> str:
+    return moment.strftime("%Y-%m-%d") if moment else UNKNOWN_DAY
+
+
+def clock_of(moment: Optional[dt.datetime]) -> str:
+    return moment.strftime("%H:%M") if moment else "--:--"
+
+
+# ----------------------------------------------------------------------------
+# 逐行读取
+# ----------------------------------------------------------------------------
+class Row(NamedTuple):
+    """一行 jsonl 的读取结果。data 为 None 表示该行无法解析（已被跳过）。"""
+    data: Optional[dict]
+    moment: Optional[dt.datetime]
+    day: str
+
+
+class Line(NamedTuple):
+    """一行 jsonl 的可展示语义（不含正文）。
+
+    报表与灵动岛都从这里取字段，口径不可能再分叉。
+    """
+    typ: str
+    sid: str
+    cwd: str
+    proj: str
+    pd: dict
+    title: str
+    msg: dict
+    nu: Optional[dict]
+    credit: float
+    original: float
+    thinking: float
+    miss: float
+    hit: float
+    model: str
+    quota: Optional[dict]
+
+
+def iter_jsonl(path, *, mtime_ms=None) -> Iterator[Row]:
+    """全量逐行读取一个 jsonl 文件。
+
+    空行不产出；解析失败或非 dict 的行产出一个 data=None 的 Row，
+    让调用方自行决定「计数但不统计」（报表需要总行数，灵动岛直接丢弃）。
+    """
+    try:
+        fh = open(path, "r", encoding="utf-8", errors="ignore")
+    except OSError:
+        return
+    with fh:
+        for raw in fh:
+            text = raw.strip()
+            if not text:
+                continue
+            try:
+                o = json.loads(text)
+            except json.JSONDecodeError:
+                yield Row(None, None, UNKNOWN_DAY)
+                continue
+            if not isinstance(o, dict):
+                yield Row(None, None, UNKNOWN_DAY)
+                continue
+            moment = to_moment(o.get("timestamp"), mtime_ms)
+            yield Row(o, moment, day_of(moment))
+
+
+def to_line(row: Row, fallback_proj: str = "") -> Line:
+    """从 Row 抽出两边都要用的字段。row.data 必须非空。"""
+    o = row.data or {}
+    pd = o.get("providerData") if isinstance(o.get("providerData"), dict) else {}
+    typ = o.get("type") if isinstance(o.get("type"), str) else UNKNOWN_DAY
+    sid = o.get("sessionId") if isinstance(o.get("sessionId"), str) else ""
+    cwd = o.get("cwd") if isinstance(o.get("cwd"), str) else ""
+    msg = o.get("message") if isinstance(o.get("message"), dict) else {}
+    usage = msg.get("usage") or pd.get("usage")
+    nu = norm_usage(usage)
+    ru = pd.get("rawUsage") if isinstance(pd.get("rawUsage"), dict) else {}
+
+    credit = float(num(ru.get("credit")))
+    original = float(num(ru.get("original_credit")))
+    thinking = num(ru.get("completion_thinking_tokens"))
+    if not thinking:
+        det = ru.get("completion_tokens_details")
+        if isinstance(det, dict):
+            thinking = num(det.get("reasoning_tokens"))
+    miss = num(ru.get("prompt_cache_miss_tokens"))
+    hit = num(ru.get("prompt_cache_hit_tokens")) or (nu["cache"] if nu else 0)
+
+    q = ru.get("quota")
+    quota = None
+    if isinstance(q, dict) and isinstance(q.get("model"), str):
+        quota = {
+            "model": q["model"],
+            "percent": num(q.get("percent")),
+            "resetAt": q.get("reset_at") if isinstance(q.get("reset_at"), str) else "",
+        }
+
+    return Line(
+        typ=typ,
+        sid=sid,
+        cwd=cwd,
+        proj=cwd or fallback_proj,
+        pd=pd,
+        title=o.get("aiTitle") if isinstance(o.get("aiTitle"), str) else "",
+        msg=msg,
+        nu=nu,
+        credit=credit,
+        original=original,
+        thinking=thinking,
+        miss=miss,
+        hit=hit,
+        model=pd.get("model") if isinstance(pd.get("model"), str) else "unknown",
+        quota=quota,
+    )
+
+
+class IncrementalReader:
+    """按字节偏移增量读取 jsonl，只解析新出现的完整行。
+
+    行为与 scanner.js 的 _scanFile 一致：
+      - 文件长于已读偏移 → 只读新增字节
+      - 文件短于已读偏移（被重写/截断）→ 重置该文件并按全量重读，同时回报 truncated
+      - 末尾没有换行的残行留在缓冲里，等下次补齐再解析（不会误解析半行 JSON）
+    """
+
+    def __init__(self) -> None:
+        self._state: Dict[str, dict] = {}   # path -> {"offset": int, "buf": bytes}
+
+    def reset(self) -> None:
+        self._state.clear()
+
+    def read(self, path, *, mtime_ms=None) -> Tuple[List[Row], bool]:
+        """返回 (新解析出的行, 是否发生截断重写)。"""
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return [], False
+
+        st = self._state.get(path)
+        if st is None:
+            st = {"offset": 0, "buf": b""}
+            self._state[path] = st
+        if size < st["offset"]:
+            # 文件被重写：丢掉旧状态，从零开始，并让上层清空自己的聚合
+            st["offset"] = 0
+            st["buf"] = b""
+            rows = self._read_chunk(path, st, size, mtime_ms)
+            return rows, True
+        if size == st["offset"]:
+            return [], False
+        return self._read_chunk(path, st, size, mtime_ms), False
+
+    def _read_chunk(self, path, st: dict, size: int, mtime_ms) -> List[Row]:
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(st["offset"])
+                raw = fh.read(size - st["offset"])
+        except OSError:
+            return []
+
+        # 关键：offset 永远推进到文件末尾。末尾残行留在 buf 里等下次补全，
+        # 不从 offset 回退重读——回退会让残行在下次扫描时被重复解析。
+        st["offset"] = size
+        nl = raw.rfind(b"\n")
+        if nl == -1:
+            st["buf"] = st["buf"] + raw
+            return []
+
+        complete = st["buf"] + raw[: nl + 1]
+        st["buf"] = raw[nl + 1:]
+
+        rows: List[Row] = []
+        for text in complete.decode("utf-8", "ignore").split("\n"):
+            text = text.strip()
+            if not text:
+                continue
+            try:
+                o = json.loads(text)
+            except json.JSONDecodeError:
+                rows.append(Row(None, None, UNKNOWN_DAY))
+                continue
+            if not isinstance(o, dict):
+                rows.append(Row(None, None, UNKNOWN_DAY))
+                continue
+            moment = to_moment(o.get("timestamp"), mtime_ms)
+            rows.append(Row(o, moment, day_of(moment)))
+        return rows

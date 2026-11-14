@@ -13,6 +13,7 @@
     "appId": "com.wbtool.island",
     "productName": "wbtool-island",
     "copyright": "Copyright © 2026 wbtool",
+    "asar": false,
     "files": [
       "src/**/*",
       "assets/**/*"

@@ -19,6 +19,12 @@
 //      渲染层用同一帧数据画圆角与内容淡入淡出 —— 窗口与内容永不撕裂。
 //   5) 形变期间不推扫描数据，避免 DOM 重排让文字抽搐；结束后补发。
 //   6) IPC 契约与 preload API 和 wbtool 完全同名 —— 渲染层可直接互换。
+//
+// 【v1.4.0 测试版】遮挡问题方案：可拖拽
+//   放弃「鼠标穿透」（胶囊物理上压在标签栏上，穿透与可点击互斥，无解），
+//   改为整颗胶囊可自由拖拽：想点标签页时直接把它拖开，位置写入 prefs 跨启动记忆。
+//   渲染层用「按下-移动阈值」区分拖拽与点击：位移 <4px 视为点击（展开/收起），
+//   否则视为拖拽并逐帧把窗口移到位。
 // ============================================================================
 const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage } = require('electron');
 const path = require('path');
@@ -52,23 +58,39 @@ const SPRING = {
   },
 };
 
+// ---------- 临时诊断日志（ISLAND_DEBUG=1 时写入 island-debug.log）----------
+const ISLAND_DEBUG = !!process.env.ISLAND_DEBUG;
+const DEBUG_LOG = path.join(__dirname, '..', 'island-debug.log');
+function dlog(...a) {
+  if (!ISLAND_DEBUG) return;
+  try {
+    fs.appendFileSync(DEBUG_LOG, new Date().toISOString().slice(11, 23) + ' ' + a.join(' ') + '\n');
+  } catch (_) {}
+}
+
 let win = null;
 let tray = null;
 let scanner = new Scanner(PROJECTS);
 const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
 
-// ---------- 置顶偏好（userData 下的小 JSON，跨启动记忆）----------
+// ---------- 置顶偏好 + 位置记忆（userData 下的小 JSON，跨启动记忆）----------
 let pinned = true;
 let prefsPath = '';
-function loadPinned() {
+let savedPos = null;          // {x, y} 上次拖到的位置
+function readPrefs() {
+  try { return JSON.parse(fs.readFileSync(prefsPath, 'utf8')); } catch (_) { return {}; }
+}
+function loadPinned() { return readPrefs().pinned !== false; }
+function savePrefs(patch) {
   try {
-    return JSON.parse(fs.readFileSync(prefsPath, 'utf8')).pinned !== false;
-  } catch (_) { return true; }
+    const p = readPrefs();
+    Object.assign(p, patch);
+    fs.writeFileSync(prefsPath, JSON.stringify(p), 'utf8');
+  } catch (_) {}
 }
-function savePinned() {
-  try { fs.writeFileSync(prefsPath, JSON.stringify({ pinned }), 'utf8'); } catch (_) {}
-}
+function savePinned() { savePrefs({ pinned }); }
+function savePos(x, y) { savePrefs({ x, y }); }
 
 // ---------- 屏幕与定位 ----------
 let centerX = 0;
@@ -79,9 +101,46 @@ function measureScreen() {
   topY = wa.y + TOP_Y;
 }
 function xFor(w) { return Math.max(0, Math.round(centerX - w / 2)); }
+
+// 【尺寸唯一真源】窗口尺寸只能来自弹簧引擎的当前值，永远不读回 getBounds()。
+// 根因：Windows + 透明无边框窗口上，win.setPosition() 会把窗口尺寸一起带偏
+//       （实测拖拽 40 帧从 390×52 一路涨到 418×80），所以拖拽一律用 setBounds
+//       显式带上 width/height，并且加一道 resize 守卫把任何越权尺寸拉回来。
+function wantSize() {
+  return {
+    w: Math.max(1, Math.round(spring.w.x)),
+    h: Math.max(1, Math.round(spring.h.x)),
+  };
+}
+
+// 形变定位：以「持久化的水平中心锚点 + 当前顶边」为锚，向下长/向上收，
+// 不再跳回屏幕中心 —— 拖到哪，展开收起的中心就在哪。
+// 【为什么不每帧从 getBounds() 反推中心】Windows 上 setBounds 的 DIP↔物理像素换算
+// 有 ±1px 抖动，逐帧 round(cx - w/2) 会把 0.5px 误差累积成「每轮右移几十像素」的漂移。
+// 锚点只在「首次创建」和「拖拽到位」两个时刻写入一次，之后全程复用 → 漂移恒为 0。
+let anchorCX = null;
 function place(w, h) {
   if (!win) return;
-  win.setBounds({ x: xFor(w), y: topY, width: w, height: h });
+  const W = Math.round(w), H = Math.round(h);
+  const b = win.getBounds();
+  if (dragGrab) {
+    // 拖拽中：位置由拖拽逻辑决定，这里只同步尺寸，不和拖拽抢位置
+    win.setBounds({ x: b.x, y: b.y, width: W, height: H });
+    return;
+  }
+  if (anchorCX === null) anchorCX = b.x + W / 2;   // 首次：用当前命令尺寸算一次锚点
+  win.setBounds({ x: Math.round(anchorCX - W / 2), y: b.y, width: W, height: H });
+}
+
+// 拖拽位置限制：至少留一部分在屏幕内，避免拖丢
+function clampPos(x, y, w, h) {
+  const wa = screen.getDisplayNearestPoint({ x: Math.round(x + w / 2), y: Math.round(y + h / 2) }).workArea;
+  const minX = wa.x - w + 80, maxX = wa.x + wa.width - 80;
+  const minY = wa.y - 8,         maxY = wa.y + wa.height - 40;
+  return {
+    x: Math.min(maxX, Math.max(minX, Math.round(x))),
+    y: Math.min(maxY, Math.max(minY, Math.round(y))),
+  };
 }
 
 const clamp01 = t => Math.max(0, Math.min(1, t));
@@ -175,7 +234,6 @@ function startMorph(expand, targetH) {
     : PILL_H;
 
   expanded = !!expand;
-  const wasActive = spring.active;
   const sameW = Math.abs(cur[0] - tw) < 1;
   const sameH = Math.abs(cur[1] - th) < 1;
 
@@ -219,9 +277,17 @@ function iconPath() { return path.join(__dirname, '..', 'assets', 'icon.ico'); }
 
 function createWindow() {
   measureScreen();
+  // 初始位置：优先用上次拖到的位置（并夹回可见范围），否则屏幕顶部正中
+  const init = savedPos
+    ? clampPos(savedPos.x, savedPos.y, PILL_W, PILL_H)
+    : { x: Math.round(centerX - PILL_W / 2), y: topY };
+  const initX = init.x;
+  const initY = init.y;
   win = new BrowserWindow({
     width: PILL_W,
     height: PILL_H,
+    x: initX,
+    y: initY,
     title: 'wbtool 灵动岛',
     icon: iconPath(),
     frame: false,
@@ -233,7 +299,7 @@ function createWindow() {
     alwaysOnTop: pinned,
     skipTaskbar: pinned,
     resizable: false,
-    movable: false,
+    movable: false,               // 用户拖拽由渲染层 + IPC 手动实现（见 drag-*）
     hasShadow: false,
     show: false,
     webPreferences: {
@@ -244,8 +310,23 @@ function createWindow() {
   });
   win.setHasShadow(false);        // 圆角外不糊黑边
   win.setAlwaysOnTop(pinned, pinned ? 'screen-saver' : 'normal');
-  // 页面加载完成后再推一次扫描（增量，几乎零开销），避免启动后干等 60s
+  // 页面加载完成后再推一次扫描（增量，几乎零开销），避免启动后干等
   win.webContents.once('did-finish-load', () => refresh());
+  // 渲染层诊断：把渲染进程的 console 与加载失败转写到 island-debug.log（仅 ISLAND_DEBUG=1）
+  // Electron 36+ 该事件签名变为 (event, details)，这里两种签名都兼容。
+  win.webContents.on('console-message', (e, a, message, line, sourceId) => {
+    if (a && typeof a === 'object') {
+      dlog('[renderer]', a.level, a.message, (a.sourceId || '').split(/[\\/]/).pop() + ':' + a.lineNumber);
+    } else {
+      dlog('[renderer]', 'L' + a, message, (sourceId || '').split(/[\\/]/).pop() + ':' + line);
+    }
+  });
+  win.webContents.on('did-fail-load', (e, code, desc, url) => {
+    dlog('[did-fail-load]', code, desc, url);
+  });
+  win.webContents.on('render-process-gone', (e, details) => {
+    dlog('[render-gone]', JSON.stringify(details));
+  });
   win.loadFile(path.join(__dirname, 'renderer', 'island.html'));
   win.once('ready-to-show', () => {
     place(PILL_W, PILL_H);
@@ -253,6 +334,20 @@ function createWindow() {
     emit(0, 0, PILL_W, PILL_H);   // 给渲染层一个确定的初始几何
   });
   win.on('closed', () => { win = null; });
+  // 尺寸守卫：除了弹簧引擎自己驱动的形变，任何来源的尺寸变化都立刻纠回终态尺寸。
+  // （兜住 setPosition / 系统 DPI 变更 / 外部工具 等一切「悄悄改大小」的路径）
+  win.on('resize', () => {
+    if (!win) return;
+    const b = win.getBounds();
+    dlog('[resize]', JSON.stringify(b), 'expanded=' + expanded, 'spring=' + spring.active);
+    if (spring.active) return;              // 形变中：尺寸由引擎逐帧驱动
+    const { w, h } = wantSize();
+    if (Math.abs(b.width - w) > 1 || Math.abs(b.height - h) > 1) {
+      dlog('[resize-clamp]', `${b.width}x${b.height} -> ${w}x${h}`);
+      win.setBounds({ x: b.x, y: b.y, width: w, height: h });
+    }
+  });
+  win.on('move', () => { if (win) dlog('[move]', JSON.stringify(win.getBounds())); });
 }
 
 // ---------- 托盘 / 置顶 ----------
@@ -320,15 +415,50 @@ function createTray() {
 ipcMain.on('resize', (e, { expanded: ex, h }) => startMorph(!!ex, h));
 ipcMain.on('reduced-motion', (e, v) => { reducedMotion = !!v; });
 
+// ---------- 拖拽（渲染层判定「拖」还是「点」，主进程负责移窗）----------
+// 位置一律用「当前真实光标位置 - 按下时光标相对窗口的偏移」算，不依赖渲染层传的
+// dx/dy（渲染层只负责判定「这是拖拽而不是点击」，只作触发信号）。
+let dragGrab = null;    // { dx, dy } 按下瞬间光标相对窗口左上角的偏移
+ipcMain.on('drag-start', () => {
+  if (!win) return;
+  const b = win.getBounds();
+  const p = screen.getCursorScreenPoint();
+  dragGrab = { dx: p.x - b.x, dy: p.y - b.y };
+  dlog('[drag-start]', JSON.stringify(b), 'cursor=' + p.x + ',' + p.y);
+});
+ipcMain.on('drag-move', () => {
+  if (!win || !dragGrab) return;
+  const p = screen.getCursorScreenPoint();
+  const { w, h } = wantSize();                 // 尺寸以弹簧引擎为准，绝不带偏
+  const pos = clampPos(p.x - dragGrab.dx, p.y - dragGrab.dy, w, h);
+  win.setBounds({ x: pos.x, y: pos.y, width: w, height: h });
+  anchorCX = pos.x + w / 2;                     // 拖到新位置后，形变中心跟着走
+  dlog('[drag-move]', 'cursor=' + p.x + ',' + p.y, 'bounds=' + JSON.stringify(win.getBounds()));
+});
+ipcMain.on('drag-end', () => {
+  dragGrab = null;
+  if (win) {
+    const b = win.getBounds();
+    savePos(b.x, b.y);          // 记住拖到的位置
+    dlog('[drag-end]', JSON.stringify(b));
+  }
+});
+
 app.whenReady().then(() => {
   prefsPath = path.join(app.getPath('userData'), 'island-prefs.json');
-  pinned = loadPinned();
+  const prefs = readPrefs();
+  pinned = prefs.pinned !== false;
+  savedPos = (typeof prefs.x === 'number' && typeof prefs.y === 'number')
+    ? { x: prefs.x, y: prefs.y } : null;
   createWindow();
   createTray();
   refresh();
   setInterval(refresh, SCAN_MS);
   app.on('second-instance', () => bringToFront());
-  app.on('before-quit', () => { if (tray) tray.destroy(); });
+  app.on('before-quit', () => {
+    if (win) { const b = win.getBounds(); savePos(b.x, b.y); }   // 退出前记住位置
+    if (tray) tray.destroy();
+  });
   screen.on('display-metrics-changed', () => {
     measureScreen();
     if (win) place(win.getSize()[0], win.getSize()[1]);

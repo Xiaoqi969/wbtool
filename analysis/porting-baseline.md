@@ -1,0 +1,56 @@
+# 移植基线（B0 固化）
+
+- **固化日期**：2026-11-14
+- **基线来源**：本地快照 `D:\Users\lenovo\Desktop\ALL\wisland`，**非 git 仓库**（`git log` 报 `not a git repository`），全部文件 mtime 停在 `2026-11-10 14:37:07`，对应上游 `github.com/AsamiAkito/wisland` 末次提交前后
+- **为什么固化**：wisland 是 4 天内由 AI 密集成型的仓库，仍处 churn 状态（评估报告 §八「必须前置的风险 1」）。本地又没有 git 历史可回溯，所以后续移植必须以上表指纹为唯一对照基准；一旦有人（或上游）改了源文件，指纹会立刻失配。
+
+## 一、关键源文件指纹
+
+| 文件 | 行数 | 字节 | sha256（前 16 位） | mtime |
+|---|---|---|---|---|
+| `wisland/ui/glass.py` | 229 | 9142 | `814c17493a6878ac` | 2026-11-10 14:37:07 |
+| `wisland/ui/anim.py` | 64 | 1874 | `90766a2e9ca8c0a9` | 2026-11-10 14:37:07 |
+| `wisland/ui/shape.py` | 234 | 8871 | `2e14e9f1ed4189b5` | 2026-11-10 14:37:07 |
+| `wisland/ui/island.py` | 1347 | 60816 | `db879e0d1387f641` | 2026-11-10 14:37:07 |
+| `wisland/ui/compact.py` | 719 | 32231 | `f2b77ee69982dcb1` | 2026-11-10 14:37:07 |
+
+> 复核命令（在 `wisland/wisland/ui` 下）：
+> ```bash
+> sha256sum glass.py anim.py shape.py island.py compact.py | cut -c1-16
+> ```
+> 若输出与上表不一致，说明源已变动，**先停下来核对差异再继续**。
+
+## 二、移植目标对应的源文件
+
+| 目标 | 源 | 处理 |
+|---|---|---|
+| `island_qt/engine/glass.py` | `wisland/ui/glass.py` | 整文件复制（229 行全要） |
+| `island_qt/engine/anim.py` | `wisland/ui/anim.py` | 整文件复制（64 行） |
+| `island_qt/engine/shape.py` | `wisland/ui/shape.py` | 只留 `body_path` / `deform` / `edge_corners`，删 `neck_path` / `drip_path` |
+| `island_qt/window.py` | `wisland/ui/island.py` | 大改裁剪到 600–800 行 |
+| `island_qt/content/compact.py` | `wisland/ui/compact.py` | 重写，只借思路 |
+
+## 三、运行环境
+
+| 项 | 值 |
+|---|---|
+| Python | 3.13.14（`C:\Users\lenovo\.workbuddy\binaries\python\versions\3.13.12\python.exe`） |
+| pip | 26.1.2（`python -m pip`，注意裸 `pip` 指向的是 3.10 那套，**必须用 `python -m pip`**） |
+| PySide6 | 见下方安装记录 |
+| 安装源注意 | 清华镜像**没有** `PySide6-Essentials` 的 wheel（返回 `from versions: none`），必须用官方源 `https://pypi.org/simple` |
+
+## 四、许可证
+
+- wisland 为 MIT（`wisland/LICENSE`），wbtool 也是 MIT，可直接移植。
+- 复用文件（`glass.py` / `anim.py` / `shape.py` 片段）**必须保留 wisland 原版权声明**，已在各文件头加注。
+
+## 五、B3 追加的移植文件（2026-11-14）
+
+`theme.py` 是「好看」的真正来源，B3 整文件复制，指纹一并钉住：
+
+| 文件 | 行数 | 字节 | sha256 前 16 位 | 目标位置 |
+|---|---|---|---|---|
+| `wisland/ui/theme.py` | 273 | 9967 | `4eb937a1054839fe` | `island_qt/ui/theme.py`（复制后 281 行，仅加 8 行 MIT 头） |
+
+`widgets.py`（710 行）暂未复制：B3 的收起态是纯 `QPainter` 自绘，用不到卡片控件；
+B6 做展开态明细页时按需取 `Card` / `Themed` 等，届时补记指纹。

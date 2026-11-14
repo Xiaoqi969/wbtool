@@ -13,4 +13,8 @@ contextBridge.exposeInMainWorld('island', {
   requestResize: (expanded, h) => ipcRenderer.send('resize', { expanded, h }),
   // 系统「减弱动效」偏好：主进程把动画压缩到 1 帧
   setReducedMotion: (v) => ipcRenderer.send('reduced-motion', !!v),
+  // 【拖拽】渲染层判定「拖」还是「点」后，把位移与结束事件交给主进程移窗。
+  dragStart: () => ipcRenderer.send('drag-start'),
+  dragMove: (dx, dy) => ipcRenderer.send('drag-move', { dx, dy }),
+  dragEnd: () => ipcRenderer.send('drag-end'),
 });
