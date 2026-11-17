@@ -4,7 +4,7 @@
 
 ## 本地运行
 
-本项目**零第三方依赖**，Python 3.8+ 直接运行即可（仅打包时才需要 PyInstaller）：
+报告主程序**零第三方依赖**，Python 3.8+ 直接运行即可（仅打包时才需要 PyInstaller）：
 
 ```bash
 python wb_usage_app.py --no-open
@@ -12,15 +12,25 @@ python wb_usage_app.py --no-open
 
 生成 `wbtool_report.html` 后用浏览器打开即可。想自动打开浏览器就去掉 `--no-open`。
 
+灵动岛（`island_qt/`）是唯一需要第三方依赖的部分：
+
+```bash
+pip install PySide6-Essentials
+python island_qt/main.py --self-test 20    # 20 秒后自检退出，无需人工盯屏
+```
+
 ## 代码结构
 
 | 位置 | 作用 |
 |---|---|
+| `scanlib.py` | **共享解析内核**：读 jsonl、判时间戳单位、抽可展示字段的唯一实现，报告与灵动岛共用（改口径要同步 `island/src/scanner.js` 的注释约定） |
 | `wb_usage_app.py` → 数据扫描层 | `collect_all()` 逐行解析 jsonl，只提取统计字段；`scan_old_files()` 只读找出超期文件 |
 | `wb_usage_app.py` → `HTML_TEMPLATE` | 内联 CSS / HTML / JS 的报告模板，占位符 `__DATA__`、`__ALIAS__`；含底部「数据清理」面板 |
 | `wb_usage_app.py` → 清理流程 | `clean_execute()`（只读预览 / 备份到 `wbtool_backup/` / 移入回收站）、`send_to_recycle_bin()`（Windows 回收站，零依赖）、`clean_result_html()`（结果页）、`run_clean()`（CLI 入口） |
 | `wb_usage_app.py` → 入口逻辑 | 路径解析、浏览器发现、日志、提示页、CLI 参数 |
-| `build.py` | Windows 双模式打包脚本 |
+| `island_qt/` | **灵动岛（PySide6 / Qt 6）**：`window.py` 窗口与形变、`content/` 两态内容、`engine/` 摘屏与弹簧与几何、`ui/theme.py` 主题、`scan_service.py` 扫描线程、`tray.py` 托盘。`_probe_b*.py` 是各批次的量化验收脚本 |
+| `island/` | 旧 Electron 工程（已停用），仅用于回退比对 |
+| `build.py` | Windows 打包脚本 |
 
 ## 修改后请至少跑一遍
 
@@ -57,6 +67,7 @@ python build.py
 ## 提交规范
 
 - 提交信息用简短中文或英文，说明改了什么、为什么。
-- 改动报告界面时，同步更新 `README.md` 的「报告包含哪些内容」与 `CHANGELOG.md`。
-- 改动清理流程时，同步更新 `README.md` 的「六、数据清理」、命令行参数表与 `CHANGELOG.md`。
+- 改动报告界面时，同步更新 `README.md` 的《四、HTML 报告》与 `CHANGELOG.md`。
+- 改动清理流程时，同步更新 `README.md` 的《七、数据清理》、命令行参数表与 `CHANGELOG.md`。
+- 改动静灵岛交互 / 外观时，同步更新 `README.md` 的《三、灵动岛》，并跑一遍 `python island_qt/main.py --self-test 20`。
 - 每个新增文件请在文件头写清它的用途（本项目所有文件都带备注）。

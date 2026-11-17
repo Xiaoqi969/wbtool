@@ -4,10 +4,14 @@
 契约严格对齐 island/src/scanner.js 的 summary()，渲染层可无缝换源：
     {
       "today":  {"token": 0, "credit": 0, "in": 0, "out": 0, "ratePerSec": 0},
-      "active": [{"name": "会话标题", "tokens": 0, "last": "HH:MM"}],
+      "active": [{"name": "会话标题", "tokens": 0, "last": "HH:MM", "rate": 0.0}],
       "files":  0,
       "updated": "HH:MM:SS"
     }
+
+`active[].rate` 是该会话**自己的**生成速度（tok/s），2026-11-18 新增：总值只能回答
+「现在整体多快」，展开态里 5 个会话同时在跑时，看不出是谁在产出、谁只是挂着。
+口径与 `today.ratePerSec` 完全一致（同一个窗口、同样只算 output），只是按 sid 分桶。
 
 两层结构：
     Tracker   纯 Python，无 Qt 依赖——可单独 import、可 CLI 跑、可单测
@@ -44,8 +48,9 @@ from scanlib import (
     to_line,
 )
 
-# 与 v1.3.0 的 SCAN_MS=10000 对齐：流速是「最近 60 秒滚动窗口」，10 秒一刷才会活地跳动。
-# 代价很低——IncrementalReader 按文件记已读偏移，稳态每轮只读新增字节（首轮全量约 1.7s）。
+# 与 v1.3.0 的 SCAN_MS=10000 对齐：流速是「最近 15 秒滚动窗口」（RATE_WINDOW_MS），
+# 10 秒一刷才会活地跳动。代价很低——IncrementalReader 按文件记已读偏移，稳态每轮只读新增字节
+# （首轮全量约 1.7s）。
 SCAN_INTERVAL_SEC = 10
 
 
@@ -65,7 +70,10 @@ class Tracker:
         self.files: set = set()
         self.start_time = _now_ms()                # 用于流速：只统计启动后的用量
         self.boot_tokens = 0
-        self.flow: List[tuple] = []                # [(事件毫秒, 本次新增 token)]
+        self.flow: List[tuple] = []                # [(事件毫秒, 本次新增 output token)]
+        # sid -> [(事件毫秒, output)]，与 flow 同一套事件，只是按会话分桶。
+        # 只服务展开态的「每会话流速」，不参与任何落盘；会话转出 active 即整条丢弃。
+        self.session_flow: Dict[str, List[tuple]] = {}
         self._recomputing = False
 
     # -- 扫描 ---------------------------------------------------------------
@@ -76,7 +84,25 @@ class Tracker:
         cutoff = now - dt.timedelta(minutes=ACTIVE_WINDOW_MIN)
         for sid in [k for k, v in self.active.items() if v["last"] < cutoff]:
             del self.active[sid]
+            # 会话已经不在「进行中」列表里，它的流速桶也一并丢掉（否则每轮累积成泄漏）
+            self.session_flow.pop(sid, None)
+        self._trim_flows(_now_ms())
         return self
+
+    def _trim_flows(self, now_ms: float) -> None:
+        """裁掉两倍窗口以外的旧事件。
+
+        `rate_per_sec` / `session_rate` 里也各有一道懒裁剪，但那只覆盖「被查询到」的桶；
+        长跑时旧会话会一直留在字典里，所以每轮扫描再统一收一次。
+        """
+        lo = now_ms - 2 * RATE_WINDOW_MS
+        if self.flow and self.flow[0][0] < lo:
+            self.flow = [e for e in self.flow if e[0] >= lo]
+        for sid, evts in list(self.session_flow.items()):
+            if not evts or evts[-1][0] < lo:
+                self.session_flow.pop(sid, None)
+            elif evts[0][0] < lo:
+                self.session_flow[sid] = [e for e in evts if e[0] >= lo]
 
     def _walk(self, path: str, now: dt.datetime) -> None:
         try:
@@ -117,6 +143,7 @@ class Tracker:
             self.files.clear()
             self.boot_tokens = 0
             self.flow.clear()
+            self.session_flow.clear()
             self.reader.reset()
             self._walk(str(self.root), now)
         finally:
@@ -142,6 +169,8 @@ class Tracker:
                     # 流速只记 output：total 里 99%+ 是 prompt（且多为 cache 命中），
                     # 那是「读进去」的量，不是模型「写出来」的速度。
                     self.flow.append((ms, nu["output"]))
+                    if ln.sid:
+                        self.session_flow.setdefault(ln.sid, []).append((ms, nu["output"]))
 
         if ln.sid:
             s = self.active.get(ln.sid)
@@ -169,8 +198,9 @@ class Tracker:
     def today(self) -> dict:
         return self.totals.get(day_of(dt.datetime.now()), {"t": 0, "cr": 0.0, "in": 0, "out": 0})
 
-    def active_list(self) -> List[dict]:
+    def active_list(self, now_ms: Optional[float] = None) -> List[dict]:
         d = day_of(dt.datetime.now())
+        now = _now_ms() if now_ms is None else now_ms
         out = []
         for sid, v in self.active.items():
             tok = (self.session_tokens.get(sid) or {}).get(d, 0)
@@ -178,6 +208,7 @@ class Tracker:
                 "name": v["title"] or v["proj"] or "会话",
                 "last": v["last"],
                 "tokens": tok,
+                "rate": self.session_rate(sid, now),
             })
         out.sort(key=lambda a: a["last"], reverse=True)
         return out
@@ -198,19 +229,38 @@ class Tracker:
         total = sum(e[1] for e in self.flow if e[0] >= cutoff)
         return total / (RATE_WINDOW_MS / 1000)
 
+    def session_rate(self, sid: str, now_ms: Optional[float] = None) -> float:
+        """单个会话的生成速度（tok/s）。窗口、口径、事件时间戳判定都与 `rate_per_sec` 相同。
+
+        与总量流速的关系是「分桶」，不是「平均」：几个会话同时产出时，各行的和约等于总流速
+        （差在 `flow` 还包含 sid 为空的用量行——这类行没会话可归，只进总量）。
+        """
+        evts = self.session_flow.get(sid)
+        if not evts:
+            return 0.0
+        now = _now_ms() if now_ms is None else now_ms
+        cutoff = now - RATE_WINDOW_MS
+        if evts[0][0] < cutoff - RATE_WINDOW_MS:
+            evts = [e for e in evts if e[0] >= cutoff - RATE_WINDOW_MS]
+            self.session_flow[sid] = evts
+        total = sum(e[1] for e in evts if e[0] >= cutoff)
+        return total / (RATE_WINDOW_MS / 1000)
+
     def summary(self) -> dict:
         t = self.today()
+        now = _now_ms()                 # 同一帧里所有流速用同一个「现在」，避免各算各的
         return {
             "today": {
                 "token": t["t"],
                 "credit": t["cr"],
                 "in": t["in"],
                 "out": t["out"],
-                "ratePerSec": self.rate_per_sec(),
+                "ratePerSec": self.rate_per_sec(now),
             },
             "active": [
-                {"name": a["name"], "tokens": a["tokens"], "last": clock_of(a["last"])}
-                for a in self.active_list()
+                {"name": a["name"], "tokens": a["tokens"], "last": clock_of(a["last"]),
+                 "rate": a["rate"]}
+                for a in self.active_list(now)
             ],
             "files": len(self.files),
             "updated": dt.datetime.now().strftime("%H:%M:%S"),

@@ -49,7 +49,7 @@ APP_NAME = "wbtool-island"
 
 
 def _redirect_stdio_if_frozen() -> Path | None:
-    """打包后没有控制台：把 stdout/stderr 落到 `%LOCALAPPDATA%/wbtool/island-qt.log`。
+    """打包后没有控制台：把 stdout/stderr 落到 `%APPDATA%/wbtool-island/island-qt.log`。
 
     没有这一步，`--self-test` 与一切排查信息在 exe 里全进黑洞（PyInstaller 的
     --windowed 会把 sys.stdout 置 None，print 静默丢弃）。开发态不动，终端照常看。

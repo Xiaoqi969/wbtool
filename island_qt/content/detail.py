@@ -43,7 +43,7 @@ TITLE = "今日用量"
 SEC_SESSIONS = "进行中会话"
 EMPTY_TEXT = "暂无进行中的会话"
 FOOT_TMPL = "每 %d 秒刷新 · %d 个日志文件"
-REFRESH_SEC = 60
+REFRESH_SEC = 10          # 与 scan_service.SCAN_INTERVAL_SEC 一致（曾误写成 60）
 
 
 class DetailPage:
@@ -74,7 +74,8 @@ class DetailPage:
         self._rate = 0.0
         self._updated = "--:--:--"
         self._files = 0
-        self._sessions: list[tuple[str, float, str]] = []   # (标题, token, 最后活跃)
+        # (标题, 今日 token, 该会话自己的流速 tok/s, 最后活跃)
+        self._sessions: list[tuple[str, float, float, str]] = []
 
     # ================================================================ 数据
     def set_summary(self, data: dict) -> bool:
@@ -82,7 +83,8 @@ class DetailPage:
         s = data or {}
         t = s.get("today") or {}
         sessions = [(str(a.get("name") or "会话"), float(a.get("tokens") or 0),
-                     str(a.get("last") or "")) for a in (s.get("active") or [])]
+                     float(a.get("rate") or 0), str(a.get("last") or ""))
+                    for a in (s.get("active") or [])]
         new = (float(t.get("token") or 0), float(t.get("in") or 0), float(t.get("out") or 0),
                float(t.get("credit") or 0), float(t.get("ratePerSec") or 0),
                int(s.get("files") or 0), str(s.get("updated") or ""), sessions)
@@ -131,8 +133,8 @@ class DetailPage:
         p.setPen(theme.text(0.95 * a))
         p.drawText(r, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, TITLE)
 
-        # 药丸：收起态只有「流速」一个数，展开后它仍然是最该被盯着看的活数
-        txt = f"流速 {fmt_rate(self._rate)}"
+        # 药丸：所有会话合计的流速。标「总」是为了和下面每行的「本会话流速」区分开
+        txt = f"总流速 {fmt_rate(self._rate)}"
         fm = QtGui.QFontMetrics(self.f_pill)
         pw = fm.horizontalAdvance(txt) + 18
         pr = QtCore.QRectF(r.right() - pw, r.center().y() - 9.5, pw, 19)
@@ -196,17 +198,28 @@ class DetailPage:
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, EMPTY_TEXT)
             return card.bottom()
 
-        # 列：标题（可省略）| token | 最后活跃
-        w_time, w_tok, gap = 44.0, 54.0, 8.0
-        name_w = inner_r - inner_l - w_tok - w_time - 2 * gap
-        for i, (name, tok, last) in enumerate(self._sessions[:MAX_ROWS]):
+        # 列：标题（可省略）| 本会话流速 | 今日 token | 最后活跃
+        w_time, w_tok, w_rate, gap = 44.0, 54.0, 48.0, 8.0
+        x_rate = inner_r - w_time - gap - w_tok - gap - w_rate
+        name_w = x_rate - gap - inner_l
+        for i, (name, tok, rate, last) in enumerate(self._sessions[:MAX_ROWS]):
             ry = y + i * ROW_H
             p.setFont(self.f_name)
             p.setPen(theme.text(0.92 * a))
             elided = self._fm_name.elidedText(name, QtCore.Qt.TextElideMode.ElideRight, int(name_w))
             p.drawText(QtCore.QRectF(inner_l, ry, name_w, ROW_H),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+            # 本会话流速：只有真的在产出才给数字，静默会话留一个破折号——
+            # 五行都写 0/s 是噪声不是信息（进行中 ≠ 正在生成）。
             p.setFont(self.f_tok)
+            if rate >= 0.05:
+                p.setPen(theme.text2(a))
+                rate_text = fmt_rate(rate)
+            else:
+                p.setPen(theme.text3(0.9 * a))
+                rate_text = "—"
+            p.drawText(QtCore.QRectF(x_rate, ry, w_rate, ROW_H),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, rate_text)
             p.setPen(theme.text2(a))
             p.drawText(QtCore.QRectF(inner_r - w_time - gap - w_tok, ry, w_tok, ROW_H),
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, fmt_tokens(tok))
