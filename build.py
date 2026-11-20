@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-文件说明：wbtool 的 Windows 打包脚本。
+文件说明：WBtool 的 Windows 打包脚本。
 
 两个启动器、两条独立技术栈（刻意解耦，互不干扰）：
-  1) wbtool 主程序（HTML 报告）：Python + PyInstaller，零第三方运行时依赖。
+  1) WBtool 主程序（HTML 报告）：Python + PyInstaller，零第三方运行时依赖。
   2) 灵动岛：2.0.0 起统一为 PySide6（island_qt/）。旧 Electron 工程（island/）只在显式
      `build.py island` 时构建、产物名带 `-legacy`，用于回退比对，不再进默认流程。
 
 产物（均写入 release/ 目录，该目录不进 git）：
-  release/wbtool.exe                  -> 单文件版（HTML 报告启动器）
-  release/wbtool-portable.zip         -> 目录版压缩包，解压后运行 wbtool/wbtool.exe
-  release/wbtool-island.exe           -> 单文件版（桌面灵动岛，PySide6）
-  release/wbtool-island-portable.zip  -> 目录版压缩包；解压后运行 wbtool-island/wbtool-island.exe
-  release/wbtool-island-legacy.exe    -> 旧 Electron 版（仅 `build.py island` 产出，弃用）
-  release/wbtool-island-legacy-portable.zip
+  release/WBtool.exe                  -> 单文件版（HTML 报告启动器）
+  release/WBtool-portable.zip         -> 目录版压缩包，解压后运行 WBtool/WBtool.exe
+  release/WBtool-island.exe           -> 单文件版（桌面灵动岛，PySide6）
+  release/WBtool-island-portable.zip  -> 目录版压缩包；解压后运行 WBtool-island/WBtool-island.exe
+  release/WBtool-island-legacy.exe    -> 旧 Electron 版（仅 `build.py island` 产出，弃用）
+  release/WBtool-island-legacy-portable.zip
 
 electron-builder 的原始输出在 release/_out-<时间戳>/（本次构建独占的全新空工作区），
 build.py 会把 exe / zip 对齐命名后搬到 release/ 根目录，并清理工作区里的中间产物。
@@ -51,17 +51,17 @@ os.environ["CODEBUDDY_SAFE_DELETE_ENABLED"] = "0"
 
 ROOT = Path(__file__).resolve().parent          # 项目根目录（本文件所在处）
 ENTRY = ROOT / "wb_usage_app.py"               # 主程序入口（HTML 报告）
-ICON = ROOT / "assets" / "wbtool.ico"          # 程序图标（WorkBuddy 官方 logo）
+ICON = ROOT / "assets" / "WBtool.ico"          # 程序图标（WorkBuddy 官方 logo）
 ISLAND_DIR = ROOT / "island"                   # Electron 灵动岛工程目录
 RELEASE = ROOT / "release"                     # 最终产物目录
 ISLAND_OUT = RELEASE / "_electron-out"         # electron-builder 原始输出（与最终产物分层）
-APP_NAME = "wbtool"                            # 主程序产物名称
+APP_NAME = "WBtool"                            # 主程序产物名称
 
 # PySide6 灵动岛（B8）：入口在子目录里、依赖父目录的 scanlib，打包参数与主程序不同
 ISLAND_QT_DIR = ROOT / "island_qt"
 ISLAND_QT_ENTRY = ISLAND_QT_DIR / "main.py"
-ISLAND_QT_NAME = "wbtool-island"               # 2.0.0 起，正式版名字归 PySide6 版
-ISLAND_LEGACY_NAME = "wbtool-island-legacy"    # 旧 Electron 版改名保留，可随时回退比对
+ISLAND_QT_NAME = "WBtool-island"               # 2.0.0 起，正式版名字归 PySide6 版
+ISLAND_LEGACY_NAME = "WBtool-island-legacy"    # 旧 Electron 版改名保留，可随时回退比对
 
 # 主程序不依赖 GUI，可排除 tkinter
 EXCLUDES = ("tkinter", "unittest", "pydoc", "doctest")
@@ -172,10 +172,10 @@ def build_island_qt(tmp):
     三个容易漏的打包细节：
       1. `--paths` 要同时给 ROOT 与 island_qt —— 入口 import 的是 `prefs`/`window`
          （同目录）与 `scanlib`（父目录），PyInstaller 静态分析得能找到。
-      2. `--add-data assets;assets` —— tray.py 用 `Path(__file__).parent.parent/assets/wbtool.ico`，
+      2. `--add-data assets;assets` —— tray.py 用 `Path(__file__).parent.parent/assets/WBtool.ico`，
          冻结后 `__file__` 在 `_MEIPASS/island_qt/`，图标必须落在 `_MEIPASS/assets/`。
       3. `--windowed` —— 无控制台；启动日志由 main.py 在冻结态重定向到
-         `%LOCALAPPDATA%/wbtool/island-qt.log`，否则 --self-test 的输出没地方看。
+         `%LOCALAPPDATA%/WBtool/island-qt.log`，否则 --self-test 的输出没地方看。
     """
     if not ISLAND_QT_ENTRY.is_file():
         sys.exit(f"缺少灵动岛入口：{ISLAND_QT_ENTRY}")
@@ -195,7 +195,7 @@ def build_island_qt(tmp):
 
 
 # ---------------------------------------------------------------------------
-# wbtool-island：Electron 构建（npm + electron-builder）
+# WBtool-island：Electron 构建（npm + electron-builder）
 # ---------------------------------------------------------------------------
 def _node_env():
     """把常见 Node 安装路径补进 PATH，并设置 Electron 镜像（国内加速）。"""
@@ -264,7 +264,7 @@ def build_island():
         if old.is_dir():
             shutil.rmtree(old, ignore_errors=True)
 
-    print(f"\n>>> 构建 wbtool-island（Electron）")
+    print(f"\n>>> 构建 WBtool-island（Electron）")
     print(f"    cwd = {ISLAND_DIR}")
     if evicted:
         print(f"    已移出上次遗留的中间产物：{', '.join(evicted)}")
@@ -304,15 +304,15 @@ def build_island():
                     time.sleep(15)
         else:
             print(f"[island] 连续 4 次构建失败：\n{last_err}", file=sys.stderr)
-            sys.exit("wbtool-island 构建失败：请检查杀软 / 索引服务是否持续锁定 release/ 目录")
+            sys.exit("WBtool-island 构建失败：请检查杀软 / 索引服务是否持续锁定 release/ 目录")
     finally:
         pkg_path.write_text(original_pkg, encoding="utf-8")
 
-    # 对齐命名：portable -> release/wbtool-island-legacy.exe；zip -> ...-legacy-portable.zip
+    # 对齐命名：portable -> release/WBtool-island-legacy.exe；zip -> ...-legacy-portable.zip
     # 2.0.0 起正式产物名归 PySide6 版，Electron 版降级为 legacy（保留构建能力以便回退比对）
-    src_exe = out_dir / "wbtool-island.exe"
+    src_exe = out_dir / "WBtool-island.exe"
     if not src_exe.is_file():
-        cands = sorted(out_dir.glob("wbtool-island*.exe"))
+        cands = sorted(out_dir.glob("WBtool-island*.exe"))
         if not cands:
             sys.exit(f"构建未完成：{out_dir} 中没有 portable exe")
         src_exe = cands[-1]
@@ -320,9 +320,9 @@ def build_island():
     shutil.copy2(src_exe, portable)         # 覆盖写，不做删除（兼容桌面文件保护策略）
     print(f"\n[island-legacy] {portable}  {portable.stat().st_size / 1024 / 1024:.1f} MB")
 
-    # electron-builder 26 的 zip 命名为 wbtool-island-1.3.0-win.zip
-    zips = sorted(out_dir.glob("wbtool-island-*-win*.zip")) or \
-           sorted(out_dir.glob("wbtool-island-*.zip"))
+    # electron-builder 26 的 zip 命名为 WBtool-island-1.3.0-win.zip
+    zips = sorted(out_dir.glob("WBtool-island-*-win*.zip")) or \
+           sorted(out_dir.glob("WBtool-island-*.zip"))
     if zips:
         dst = RELEASE / (ISLAND_LEGACY_NAME + "-portable.zip")
         if dst.exists() or dst.is_symlink():
@@ -341,11 +341,11 @@ def build_island():
 def main():
     ap = argparse.ArgumentParser(
         prog="build.py",
-        description="wbtool 打包脚本：生成 Windows 目录版(zip) 与单文件版(exe)",
+        description="WBtool 打包脚本：生成 Windows 目录版(zip) 与单文件版(exe)",
     )
     ap.add_argument("mode", nargs="?", default="all",
                     choices=("all", "onedir", "onefile", "island", "island_qt"),
-                    help="all=wbtool + 灵动岛（默认）；onedir/onefile=仅 wbtool 对应版本；"
+                    help="all=WBtool + 灵动岛（默认）；onedir/onefile=仅 WBtool 对应版本；"
                          "island_qt=仅构建灵动岛（PySide6，出 exe + portable.zip）；"
                          "island=仅构建旧 Electron 版（已弃用，产物名带 -legacy）")
     args = ap.parse_args()
@@ -363,10 +363,10 @@ def main():
     RELEASE.mkdir(exist_ok=True)
 
     # 中间产物放到临时目录，构建结束自动清理；不写入项目目录，也不触碰任何个人文件。
-    with tempfile.TemporaryDirectory(prefix="wbtool_build_") as td:
+    with tempfile.TemporaryDirectory(prefix="WBtool_build_") as td:
         tmp = Path(td)
         out = []
-        # wbtool 主程序（保持原样）
+        # WBtool 主程序（保持原样）
         if args.mode in ("all", "onedir"):
             out.append(build_portable(tmp, ENTRY, APP_NAME, EXCLUDES))
         if args.mode in ("all", "onefile"):

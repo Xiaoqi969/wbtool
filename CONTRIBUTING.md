@@ -10,7 +10,7 @@
 python wb_usage_app.py --no-open
 ```
 
-生成 `wbtool_report.html` 后用浏览器打开即可。想自动打开浏览器就去掉 `--no-open`。
+生成 `WBtool_report.html` 后用浏览器打开即可。想自动打开浏览器就去掉 `--no-open`。
 
 灵动岛（`island_qt/`）是唯一需要第三方依赖的部分：
 
@@ -26,7 +26,7 @@ python island_qt/main.py --self-test 20    # 20 秒后自检退出，无需人�
 | `scanlib.py` | **共享解析内核**：读 jsonl、判时间戳单位、抽可展示字段的唯一实现，报告与灵动岛共用（改口径要同步 `island/src/scanner.js` 的注释约定） |
 | `wb_usage_app.py` → 数据扫描层 | `collect_all()` 逐行解析 jsonl，只提取统计字段；`scan_old_files()` 只读找出超期文件 |
 | `wb_usage_app.py` → `HTML_TEMPLATE` | 内联 CSS / HTML / JS 的报告模板，占位符 `__DATA__`、`__ALIAS__`；含底部「数据清理」面板 |
-| `wb_usage_app.py` → 清理流程 | `clean_execute()`（只读预览 / 备份到 `wbtool_backup/` / 移入回收站）、`send_to_recycle_bin()`（Windows 回收站，零依赖）、`clean_result_html()`（结果页）、`run_clean()`（CLI 入口） |
+| `wb_usage_app.py` → 清理流程 | `clean_execute()`（只读预览 / 备份到 `WBtool_backup/` / 移入回收站）、`send_to_recycle_bin()`（Windows 回收站，零依赖）、`clean_result_html()`（结果页）、`run_clean()`（CLI 入口） |
 | `wb_usage_app.py` → 入口逻辑 | 路径解析、浏览器发现、日志、提示页、CLI 参数 |
 | `island_qt/` | **灵动岛（PySide6 / Qt 6）**：`window.py` 窗口与形变、`content/` 两态内容、`engine/` 摘屏与弹簧与几何、`ui/theme.py` 主题、`scan_service.py` 扫描线程、`tray.py` 托盘。`_probe_b*.py` 是各批次的量化验收脚本 |
 | `island/` | 旧 Electron 工程（已停用），仅用于回退比对 |
@@ -42,7 +42,7 @@ python -c "import py_compile; py_compile.compile('wb_usage_app.py', doraise=True
 python wb_usage_app.py --no-open
 
 # 3. 前端渲染检查（无头 Edge 导出 DOM，确认没有 undefined / NaN / 空面板）
-msedge --headless --disable-gpu --virtual-time-budget=3000 --dump-dom file:///.../wbtool_report.html
+msedge --headless --disable-gpu --virtual-time-budget=3000 --dump-dom file:///.../WBtool_report.html
 
 # 4. 清理流程（务必只用脱敏合成数据，见下方红线）
 python wb_usage_app.py --clean-preview --projects ./demo-logs --days 30 --no-open
@@ -58,7 +58,7 @@ python build.py
 
 ## 隐私红线（重要）
 
-- **不要**把 `wbtool_report.html`、`wbtool_clean_report.html`、`*.log`、任何含真实项目路径或会话标题的文件提交进仓库，也不要贴进 Issue。
+- **不要**把 `WBtool_report.html`、`WBtool_clean_report.html`、`*.log`、任何含真实项目路径或会话标题的文件提交进仓库，也不要贴进 Issue。
 - **不要**让报告内联对话正文、推理文本、工具参数/输出、文件快照内容；清理面板只列相对路径、大小与日期。
 - 需要示例数据时，请构造脱敏的合成 jsonl，不要复制本机真实日志。
 - **不要**对本机真实日志跑 `--clean --yes` 做验证。清理测试一律放在临时合成目录，

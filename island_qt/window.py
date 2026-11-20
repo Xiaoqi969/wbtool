@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """island_qt/window.py — 灵动岛窗口（截至 B7：形变 + 内容 + 拖拽 + 系统集成）。
 
-从 wisland 的 island.py（1347 行）裁剪而来，只留 wbtool 需要的那部分：
+从 wisland 的 island.py（1347 行）裁剪而来，只留 WBtool 需要的那部分：
 
     保留   透明无边框置顶窗口（217-222 行）、PreciseTimer 16ms 循环（300-303 行）、
            _needs_frames 空闲停帧（544-553 行）、paintEvent 三层绘制（946-1028 行）、
@@ -11,7 +11,7 @@
            全屏隐藏 / 多页栈与导航栏 / 宠物形象 / 媒体播放控件
 
 窗口容器固定 900×680（容纳展开态 640 + 阴影），本体水平居中、上沿固定。
-透明区域靠 WM_NCHITTEST 返回 HTTRANSPARENT 穿透到下层 —— 这条是 wbtool 的硬需求，
+透明区域靠 WM_NCHITTEST 返回 HTTRANSPARENT 穿透到下层 —— 这条是 WBtool 的硬需求，
 用户最初的问题就是灵动岛挡住了浏览器标签页，所以不能靠「窗口刚好和胶囊一样大」蒙混。
 
 三条硬约束（清单附 B 铁律）：
@@ -131,7 +131,7 @@ class IslandWindow(QtWidgets.QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.NoDropShadowWindowHint,
         )
-        self.setWindowTitle("wbtool 灵动岛")
+        self.setWindowTitle("WBtool 灵动岛")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)

@@ -1,14 +1,14 @@
-# wbtool / .gitignore
+# WBtool / .gitignore
 # 文件说明：规定哪些文件不进 Git 仓库。
 # 原则：仓库只提交源码与文档；本机数据、构建产物、二进制程序一律排除，
 #       避免把含真实项目路径、会话标题的个人数据上传到公开仓库。
 
 # ---- 个人隐私数据（最高优先级）----
 # 程序生成的报告：内含本机项目路径、会话标题与用量明细
-wbtool_report.html
+WBtool_report.html
 wb_usage_report.html
 # 清理预览 / 结果页：含归档目录等本机绝对路径
-wbtool_clean_report.html
+WBtool_clean_report.html
 # 运行日志：内含本机绝对路径
 *.log
 # 任何人工导出的临时报告
@@ -52,9 +52,9 @@ _check.js
 _test_clean.py
 
 # ---- 运行时产生的备份 / 回收暂存（由程序在清理时生成，含本机数据）----
-wbtool_backup/
-wbtool_trash/
-wbtool_archive/
+WBtool_backup/
+WBtool_trash/
+WBtool_archive/
 
 # ---- 编辑器与操作系统 ----
 .vscode/

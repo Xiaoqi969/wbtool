@@ -204,8 +204,8 @@ def prepare_onedir() -> dict[str, Path]:
     base = Path(os.environ.get("TEMP", ".")) / "b8-onedir"
     out = {}
     for tag, zp, exe_name in (
-        ("Qt 目录版", RELEASE / "wbtool-island-portable.zip", "wbtool-island.exe"),
-        ("Electron 目录版", RELEASE / "wbtool-island-legacy-portable.zip", "wbtool-island.exe"),
+        ("Qt 目录版", RELEASE / "WBtool-island-portable.zip", "WBtool-island.exe"),
+        ("Electron 目录版", RELEASE / "WBtool-island-legacy-portable.zip", "WBtool-island.exe"),
     ):
         if not zp.is_file():
             continue
@@ -230,12 +230,12 @@ def main() -> int:
         runs = int(sys.argv[sys.argv.index("--runs") + 1])
 
     exes = {
-        "Qt 单文件": RELEASE / "wbtool-island.exe",
-        "Electron 单文件": RELEASE / "wbtool-island-legacy.exe",
+        "Qt 单文件": RELEASE / "WBtool-island.exe",
+        "Electron 单文件": RELEASE / "WBtool-island-legacy.exe",
     }
     zips = {
-        "Qt 目录版": RELEASE / "wbtool-island-portable.zip",
-        "Electron 目录版": RELEASE / "wbtool-island-legacy-portable.zip",
+        "Qt 目录版": RELEASE / "WBtool-island-portable.zip",
+        "Electron 目录版": RELEASE / "WBtool-island-legacy-portable.zip",
     }
 
     print("=" * 70)
@@ -270,7 +270,7 @@ def main() -> int:
     print("=" * 70)
     print("C Qt 版自报状态（main.py 冻结态日志）")
     print("-" * 70)
-    log = Path(os.environ.get("APPDATA", ".")) / "wbtool-island" / "island-qt.log"
+    log = Path(os.environ.get("APPDATA", ".")) / "WBtool-island" / "island-qt.log"
     if log.is_file():
         for line in log.read_text(encoding="utf-8", errors="replace").splitlines()[-4:]:
             print("  " + line)

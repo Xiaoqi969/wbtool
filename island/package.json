@@ -1,18 +1,18 @@
 {
-  "name": "wbtool-island",
+  "name": "WBtool-island",
   "version": "1.3.0",
-  "description": "wbtool 桌面端灵动岛：屏幕顶部常驻显示今日 Token / 积分与进行中的对话",
+  "description": "WBtool 桌面端灵动岛：屏幕顶部常驻显示今日 Token / 积分与进行中的对话",
   "main": "src/main.js",
-  "author": "wbtool",
+  "author": "WBtool",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win --x64"
   },
   "build": {
-    "appId": "com.wbtool.island",
-    "productName": "wbtool-island",
-    "copyright": "Copyright © 2026 wbtool",
+    "appId": "com.WBtool.island",
+    "productName": "WBtool-island",
+    "copyright": "Copyright © 2026 WBtool",
     "asar": false,
     "files": [
       "src/**/*",
@@ -35,10 +35,10 @@
       "icon": "assets/icon.ico"
     },
     "portable": {
-      "artifactName": "wbtool-island.exe"
+      "artifactName": "WBtool-island.exe"
     },
     "nsis": {
-      "artifactName": "wbtool-island-setup.exe"
+      "artifactName": "WBtool-island-setup.exe"
     }
   },
   "devDependencies": {

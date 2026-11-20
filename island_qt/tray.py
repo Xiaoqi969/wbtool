@@ -18,7 +18,7 @@ from pathlib import Path
 
 from PySide6 import QtGui, QtWidgets
 
-ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "wbtool.ico"
+ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "WBtool.ico"
 
 
 def build_icon() -> QtGui.QIcon:
@@ -90,4 +90,4 @@ class IslandTray(QtWidgets.QSystemTrayIcon):
 
     def _update_tooltip(self) -> None:
         state = "已锁定置顶" if self.pinned else "未锁定（任务栏可唤回）"
-        self.setToolTip(f"wbtool 灵动岛 · {state} · 单击提到最前")
+        self.setToolTip(f"WBtool 灵动岛 · {state} · 单击提到最前")

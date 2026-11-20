@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-wbtool - WorkBuddy 用量统计（Windows 单文件图形化工具）
+WBtool - WorkBuddy 用量统计（Windows 单文件图形化工具）
 =========================================================
 文件说明：本文件是项目唯一的主程序，包含【数据扫描层】【HTML 报告模板】【入口逻辑】三部分。
           HTML 模板内联在下方 HTML_TEMPLATE 常量中，因此生成的报告完全离线自包含。
 
-项目主页: https://github.com/Xiaoqi969/wbtool
+项目主页: https://github.com/Xiaoqi969/WBtool
 作者    : 小柒 | https://xiaoqilucky.com
 许可证  : MIT
 
@@ -21,7 +21,7 @@ wbtool - WorkBuddy 用量统计（Windows 单文件图形化工具）
             ① 近 KEEP_RECENT_DAYS(7) 天内有过对话的会话，无论多久都永不清除；
             ② 超过 7 天没有对话的会话，只清除「全部数据都超过 N 天」的整文件。
           处理去向二选一（均【可恢复】）：
-            --mode backup  → 先完整备份到 wbtool 文件夹下的 wbtool_backup/<时间戳>/，再删原文件；
+            --mode backup  → 先完整备份到 WBtool 文件夹下的 WBtool_backup/<时间戳>/，再删原文件；
             --mode recycle → 直接移入系统回收站（默认）。
           不带 --yes 的 --clean 与 --clean-preview 一律只预览，不动文件。
 
@@ -46,7 +46,7 @@ wbtool - WorkBuddy 用量统计（Windows 单文件图形化工具）
 
 打包（Windows）：
   python build.py
-  等价于: pyinstaller --onefile --windowed --icon assets/wbtool.ico --name wbtool wb_usage_app.py
+  等价于: pyinstaller --onefile --windowed --icon assets/WBtool.ico --name WBtool wb_usage_app.py
 """
 import argparse
 import ctypes
@@ -73,8 +73,8 @@ from scanlib import (
     to_moment,
 )
 
-__version__ = "2.1.0"
-APP_NAME = "wbtool"
+__version__ = "3.0.0"
+APP_NAME = "WBtool"
 CLEAN_DAYS_DEFAULT = 30        # 「可清除」阈值（天）：闲置会话中只有全部数据都超过该天数的才清除，可用 --days 覆盖
 KEEP_RECENT_DAYS = 7           # 规则1：近 N 天内有过对话的会话，无论文件多旧都【永不清除】
 CLEAN_BATCH_SIZE = 10          # 单次执行的文件数上限，逐批校验，降低误操作风险
@@ -552,13 +552,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
     <div class="modal-sub" id="modalSub"></div>
     <div class="tbl-wrap modal-list" id="modalList"></div>
     <label class="chk"><input type="checkbox" id="backupChk">
-      备份数据（勾选：先完整备份到 <code>wbtool_backup/</code> 再删除原文件；不勾选：直接移入系统回收站）</label>
+      备份数据（勾选：先完整备份到 <code>WBtool_backup/</code> 再删除原文件；不勾选：直接移入系统回收站）</label>
     <div class="modal-actions">
       <button class="btn" id="modalCancel" type="button">取消</button>
       <button class="btn danger" id="modalConfirm" type="button" disabled>确认清除</button>
     </div>
     <div class="modal-cmd" id="modalCmd" hidden>
-      <div class="modal-cmd-tip">⚠️ 本报告是 file:// 静态页，<b>浏览器没有权限删除本地文件</b>。请在<b>命令行</b>里运行下方命令（不是双击）：它会启动 wbtool 执行实际的备份 / 回收站操作。命令已自动复制。</div>
+      <div class="modal-cmd-tip">⚠️ 本报告是 file:// 静态页，<b>浏览器没有权限删除本地文件</b>。请在<b>命令行</b>里运行下方命令（不是双击）：它会启动 WBtool 执行实际的备份 / 回收站操作。命令已自动复制。</div>
       <code id="modalCmdText"></code>
       <button class="btn primary" id="modalCopy" type="button">复制命令</button>
     </div>
@@ -817,16 +817,16 @@ function renderClean(){
     '<b>⚠️ 清理会移走 WorkBuddy 的会话日志，可能导致历史会话无法恢复，请先确认不再需要。</b><br>'
     +'<b>两级删除范围：</b>① 近 <b>7 天</b>内有过对话的会话，无论多久都<b>永不清除</b>；'
     +'② 超过 7 天没有对话的会话，<b>只清除全部数据都超过 '+o.days+' 天</b>的整文件。<br>'
-    +'点「清除旧数据…」会在弹窗里让你选择去向：<b>勾选备份</b> → 先完整备份到 wbtool 文件夹下的 '
-    +'<code>wbtool_backup/</code> 再删原文件；<b>不勾选</b> → 直接移入系统<b>回收站</b>。两者都可恢复。';
+    +'点「清除旧数据…」会在弹窗里让你选择去向：<b>勾选备份</b> → 先完整备份到 WBtool 文件夹下的 '
+    +'<code>WBtool_backup/</code> 再删原文件；<b>不勾选</b> → 直接移入系统<b>回收站</b>。两者都可恢复。';
 
   document.getElementById('cleanFoot').innerHTML=
     '本报告是 <code>file://</code> 静态页，<b>浏览器没有权限删除本地文件</b>，'
-    +'因此弹窗确认后只会生成并复制一条命令，请到<b>命令行</b>运行 wbtool.exe（不是双击）来真正执行。<br>'
+    +'因此弹窗确认后只会生成并复制一条命令，请到<b>命令行</b>运行 WBtool.exe（不是双击）来真正执行。<br>'
     +'默认 <b>只预览、不动文件</b>；只有命令里带 <b>--yes</b> 才会执行。'
     +'若你用 <code>--projects</code> 或环境变量 <code>WORKBUDDY_PROJECTS_DIR</code> 指定了别的日志目录，'
     +'请在命令后补上同样的参数（本面板不内联你的绝对路径）。'
-    +'源码运行时把 <code>wbtool.exe</code> 换成 <code>python wb_usage_app.py</code>。';
+    +'源码运行时把 <code>WBtool.exe</code> 换成 <code>python wb_usage_app.py</code>。';
 }
 
 // 全局事件绑定助手（供清除弹窗复用）
@@ -860,7 +860,7 @@ function confirmClean(){
   if(!(o.files||[]).length){ closeCleanModal(); return; }
   const backup=document.getElementById('backupChk').checked;   // 勾选→备份，不勾选→回收站
   const mode=backup?'backup':'recycle';
-  const cmd='wbtool.exe --clean --mode '+mode+' --days '+o.days+' --yes';
+  const cmd='WBtool.exe --clean --mode '+mode+' --days '+o.days+' --yes';
   document.getElementById('modalCmdText').textContent=cmd;
   document.getElementById('modalCmd').hidden=false;
   copyText(cmd, document.getElementById('modalCopy'));          // 自动复制命令
@@ -881,7 +881,7 @@ function copyText(text,btn){
   }else fallback();
 }
 
-document.getElementById('meta').innerHTML='数据更新于 '+esc(DATA.generatedAt)+'<br>共 '+DATA.records.length+' 次调用 / '+fmt(DATA.totalLines)+' 行日志 · '+esc(DATA.appName||'wbtool')+' v'+esc(DATA.appVersion||'');
+document.getElementById('meta').innerHTML='数据更新于 '+esc(DATA.generatedAt)+'<br>共 '+DATA.records.length+' 次调用 / '+fmt(DATA.totalLines)+' 行日志 · '+esc(DATA.appName||'WBtool')+' v'+esc(DATA.appVersion||'');
 document.getElementById('cards').innerHTML=periodCard('今天',1)+periodCard('近 7 天',7)+periodCard('近 30 天',30);
 document.querySelectorAll('#ranges button').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('#ranges button').forEach(x=>x.classList.remove('on'));
@@ -950,14 +950,14 @@ def log_line(text):
             pass
     for d in (app_dir(), HOME, Path(tempfile.gettempdir())):
         try:
-            with (d / "wbtool.log").open("a", encoding="utf-8") as f:
+            with (d / "WBtool.log").open("a", encoding="utf-8") as f:
                 f.write(line)
             return
         except OSError:
             continue
 
 
-def write_report(html, explicit=None, name="wbtool_report.html"):
+def write_report(html, explicit=None, name="WBtool_report.html"):
     """写报告；显式路径优先，否则依次尝试 程序目录 → 家目录 → 临时目录。
 
     这样即使 exe 被放在 C:\\Program Files 等只读位置也不会崩溃。
@@ -986,7 +986,7 @@ def notice_html(title, lines):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>__TITLE__ · wbtool</title>
+<title>__TITLE__ · WBtool</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#f4f7f8;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Roboto,Arial,sans-serif;font-size:14px;display:flex;justify-content:center;padding:64px 20px}
@@ -1008,7 +1008,7 @@ code{background:#f1f6f7;padding:2px 6px;border-radius:5px;font-size:12.5px;word-
     <div class="logo">W</div>
     <div>
       <h1>__TITLE__</h1>
-      <p class="sub">wbtool v__VERSION__ · <a href="__AUTHOR_URL__" target="_blank" rel="noopener noreferrer">作者:__AUTHOR__ ↗</a></p>
+      <p class="sub">WBtool v__VERSION__ · <a href="__AUTHOR_URL__" target="_blank" rel="noopener noreferrer">作者:__AUTHOR__ ↗</a></p>
     </div>
   </div>
   <ul>__ITEMS__</ul>
@@ -1025,13 +1025,13 @@ code{background:#f1f6f7;padding:2px 6px;border-radius:5px;font-size:12.5px;word-
 
 # ----------------------------------------------------------------------------
 # 旧数据清理：默认只读；仅 --clean --yes 才执行。两种去向，皆可恢复：
-#   mode=backup  → 先复制完整备份到 wbtool_backup/<时间戳>/，再删除原文件
+#   mode=backup  → 先复制完整备份到 WBtool_backup/<时间戳>/，再删除原文件
 #   mode=recycle → 直接移入系统回收站（可恢复）
 # ----------------------------------------------------------------------------
 def send_to_recycle_bin(paths):
     """把若干文件移入系统回收站（可恢复）。仅依赖标准库 ctypes，无第三方依赖。
 
-    非 Windows 平台无系统回收站，退化为移动到 app_dir()/wbtool_trash/<时间戳>/ 下，
+    非 Windows 平台无系统回收站，退化为移动到 app_dir()/WBtool_trash/<时间戳>/ 下，
     同样不是永久删除。返回 (ok, failed_list)。
     """
     if not paths:
@@ -1074,7 +1074,7 @@ def send_to_recycle_bin(paths):
             return False, list(paths)
     else:
         # 非 Windows：退化为本地 trash 文件夹移动（仍非永久删除）
-        dest_root = (app_dir() / "wbtool_trash" /
+        dest_root = (app_dir() / "WBtool_trash" /
                      dt.datetime.now().strftime("%Y%m%d-%H%M%S")).resolve()
         failed = []
         for p in paths:
@@ -1111,9 +1111,9 @@ def clean_execute(projects_dir, days, apply, mode):
 
     moved = []
     if mode == "backup":
-        # 备份目录放在程序所在目录（wbtool 文件夹）下的 wbtool_backup/，专门存放备份数据；
+        # 备份目录放在程序所在目录（WBtool 文件夹）下的 WBtool_backup/，专门存放备份数据；
         # 且绝不在日志目录内部，避免被再次扫描。
-        dest_root = (app_dir() / "wbtool_backup" /
+        dest_root = (app_dir() / "WBtool_backup" /
                      dt.datetime.now().strftime("%Y%m%d-%H%M%S")).resolve()
         if dest_root == root or root in dest_root.parents:
             raise RuntimeError("备份目录不能位于日志目录内部，已中止清理")
@@ -1169,7 +1169,7 @@ def clean_execute(projects_dir, days, apply, mode):
 def clean_result_html(info, moved, dest, applied, note, mode="recycle"):
     """清理预览 / 结果页：windowed exe 没有控制台，结果必须以可见页面呈现。
 
-    mode 仅影响「已执行」时的文案与恢复指引：backup=备份到 wbtool_backup/；recycle=移入回收站。
+    mode 仅影响「已执行」时的文案与恢复指引：backup=备份到 WBtool_backup/；recycle=移入回收站。
     """
     files = info["files"]
     b = info["bytes"]
@@ -1177,8 +1177,8 @@ def clean_result_html(info, moved, dest, applied, note, mode="recycle"):
     if applied:
         cls = "ok"
         if mode == "backup":
-            title = "清理完成 · 已备份到 wbtool_backup/ 并移除原文件"
-            desc = (f"已把 <b>{len(moved)}</b> 个可清除的 jsonl <b>完整备份</b>到 wbtool_backup/ 下的时间戳目录，"
+            title = "清理完成 · 已备份到 WBtool_backup/ 并移除原文件"
+            desc = (f"已把 <b>{len(moved)}</b> 个可清除的 jsonl <b>完整备份</b>到 WBtool_backup/ 下的时间戳目录，"
                     "随后从日志目录移除了原文件。需要找回时，按 manifest.json 里的 rel 路径把备份搬回即可。")
         else:
             title = "清理完成 · 已移入系统回收站（可恢复）"
@@ -1223,7 +1223,7 @@ def clean_result_html(info, moved, dest, applied, note, mode="recycle"):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>__TITLE__ · wbtool</title>
+<title>__TITLE__ · WBtool</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#f4f7f8;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Roboto,Arial,sans-serif;font-size:14px;padding:40px 20px}
@@ -1257,7 +1257,7 @@ code{background:#f1f6f7;padding:2px 6px;border-radius:5px;font-size:12px;word-br
 <div class="box">
   <div class="hd"><div class="logo">W</div><div>
     <h1>__TITLE__</h1>
-    <p class="sub">wbtool v__VERSION__ · 数据清理 · <a href="__AUTHOR_URL__" target="_blank" rel="noopener noreferrer">作者:__AUTHOR__ ↗</a></p>
+    <p class="sub">WBtool v__VERSION__ · 数据清理 · <a href="__AUTHOR_URL__" target="_blank" rel="noopener noreferrer">作者:__AUTHOR__ ↗</a></p>
   </div></div>
   <div class="state __CLS__">__DESC__</div>
   <div class="cards">
@@ -1269,7 +1269,7 @@ code{background:#f1f6f7;padding:2px 6px;border-radius:5px;font-size:12px;word-br
   __ARCHIVE__
   <p class="tip">⚠️ jsonl 是 WorkBuddy 的会话日志，移走后对应的历史会话可能无法在 WorkBuddy 中恢复，请先确认不再需要。<br>
   两级删除范围：<strong>近 __RECENT__ 天内有过对话的会话永不清除</strong>；超过 __RECENT__ 天没有对话的会话，<strong>只清除全部数据都超过 __DAYS__ 天的整文件</strong>；只整文件处理，不逐行删。<br>
-  只读命令：<code>wbtool.exe --clean-preview --days __DAYS__</code> ｜ 执行命令：<code>wbtool.exe --clean --mode backup|recycle --days __DAYS__ --yes</code>（缺 --yes 只会预览；默认 mode=recycle 移入回收站）。<br>
+  只读命令：<code>WBtool.exe --clean-preview --days __DAYS__</code> ｜ 执行命令：<code>WBtool.exe --clean --mode backup|recycle --days __DAYS__ --yes</code>（缺 --yes 只会预览；默认 mode=recycle 移入回收站）。<br>
   本工具完全离线运行，不联网、不上传；只读取统计字段，绝不内联对话正文。</p>
 </div>
 </body>
@@ -1336,7 +1336,7 @@ def build_report(projects_dir, out=None, do_open=True, clean_days=CLEAN_DAYS_DEF
 
 
 def run_clean(args):
-    """清理模式：预览 / 执行（备份到 wbtool_backup 或移入回收站），结果写成 HTML 页面。"""
+    """清理模式：预览 / 执行（备份到 WBtool_backup 或移入回收站），结果写成 HTML 页面。"""
     root = Path(args.projects).expanduser()
     applied = bool(args.clean and args.yes)
     mode = args.mode or "recycle"
@@ -1354,15 +1354,15 @@ def run_clean(args):
         log_line("清理失败：\n" + err)
         html = notice_html("清理未完成", [
             "清理流程在校验阶段被中止，没有删除任何文件。",
-            "已完成的备份（如有）逐条记录在 wbtool.log，备份目录里的文件完整可搬回。",
+            "已完成的备份（如有）逐条记录在 WBtool.log，备份目录里的文件完整可搬回。",
             err.strip().splitlines()[-1],
         ])
-        p = write_report(html, args.out, name="wbtool_clean_report.html")
+        p = write_report(html, args.out, name="WBtool_clean_report.html")
         open_report(p)
         return 1
 
     html = clean_result_html(info, moved, dest, applied, note, mode)
-    p = write_report(html, args.out, name="wbtool_clean_report.html")
+    p = write_report(html, args.out, name="WBtool_clean_report.html")
     log_line(("已处理 " + str(len(moved)) + " 个文件（" + mode + "）" if applied else "只读预览")
              + " → 结果页 " + str(p) + (f" | 去向 {dest}" if dest else ""))
     if not args.no_open:
@@ -1375,7 +1375,7 @@ def parse_args(argv=None):
     ap = argparse.ArgumentParser(
         prog=APP_NAME,
         description=f"{APP_NAME} v{__version__} — WorkBuddy 本地用量统计（作者：{AUTHOR} {AUTHOR_URL}）",
-        epilog="项目主页: https://github.com/Xiaoqi969/wbtool",
+        epilog="项目主页: https://github.com/Xiaoqi969/WBtool",
     )
     ap.add_argument("--projects", metavar="DIR", default=str(PROJECTS_DIR),
                     help="会话日志目录，默认 ~/.workbuddy/projects")
@@ -1391,7 +1391,7 @@ def parse_args(argv=None):
                       help="清理可清除的 jsonl；缺少 --yes 时自动降级为只读预览")
     ap.add_argument("--mode", choices=["backup", "recycle"], default="recycle",
                     help="清理去向（仅 --clean --yes 时生效）："
-                         "backup=先完整备份到 wbtool_backup/ 再删原文件；"
+                         "backup=先完整备份到 WBtool_backup/ 再删原文件；"
                          "recycle=移入系统回收站（默认，可恢复）")
     ap.add_argument("--yes", action="store_true",
                     help="仅与 --clean 同用才真正执行清理；默认绝不移动/删除文件")
@@ -1416,7 +1416,7 @@ def main(argv=None):
         log_line("运行失败：\n" + err)
         try:
             html = notice_html("生成报告时出错", [
-                "扫描或生成报告时发生异常，完整堆栈已写入 wbtool.log。",
+                "扫描或生成报告时发生异常，完整堆栈已写入 WBtool.log。",
                 "请确认已安装 WorkBuddy 且数据目录可读。",
                 err.strip().splitlines()[-1],
             ])
@@ -1439,7 +1439,7 @@ if __name__ == "__main__":
     if sys.stdout is None:
         for d in (app_dir(), HOME, Path(tempfile.gettempdir())):
             try:
-                f = (d / "wbtool.log").open("a", encoding="utf-8")
+                f = (d / "WBtool.log").open("a", encoding="utf-8")
                 sys.stdout = f
                 sys.stderr = f
                 _LOG_REDIRECTED = True

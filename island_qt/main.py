@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""wbtool 灵动岛 · PySide6 版入口。
+"""WBtool 灵动岛 · PySide6 版入口。
 
 阶段进度：
     B0  透明无边框窗口 + 自绘胶囊                        ✅
@@ -19,7 +19,7 @@
     python island_qt/main.py --debug         启动时打印窗口几何与采样状态
 
 打包后没有控制台：冻结态下 stdout/stderr 自动落到
-    %APPDATA%/wbtool-island/island-qt.log
+    %APPDATA%/WBtool-island/island-qt.log
 （见 `_redirect_stdio_if_frozen`，`--self-test` 的输出就是从这里读的）
 """
 from __future__ import annotations
@@ -45,11 +45,11 @@ from single import InstanceServer, notify_existing   # noqa: E402
 from tray import IslandTray                    # noqa: E402
 from window import IslandWindow                # noqa: E402
 
-APP_NAME = "wbtool-island"
+APP_NAME = "WBtool-island"
 
 
 def _redirect_stdio_if_frozen() -> Path | None:
-    """打包后没有控制台：把 stdout/stderr 落到 `%APPDATA%/wbtool-island/island-qt.log`。
+    """打包后没有控制台：把 stdout/stderr 落到 `%APPDATA%/WBtool-island/island-qt.log`。
 
     没有这一步，`--self-test` 与一切排查信息在 exe 里全进黑洞（PyInstaller 的
     --windowed 会把 sys.stdout 置 None，print 静默丢弃）。开发态不动，终端照常看。

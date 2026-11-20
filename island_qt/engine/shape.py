@@ -3,7 +3,7 @@
 # 移植自 wisland —— https://github.com/AsamiAkito/wisland
 # MIT License, Copyright (c) 2026 wisland contributors
 # 原始文件：wisland/wisland/ui/shape.py（234 行 / 8871 字节 / sha256 2e14e9f1…）
-# 移植方式：整体复制（未删任何函数）；wbtool 只调用 body_path / deform / edge_corners，
+# 移植方式：整体复制（未删任何函数）；WBtool 只调用 body_path / deform / edge_corners，
 #           neck_path（颈桥）/ drip_path（残滴）是吸边拖拽专用，本工程不调用但**保留**，
 #           以便与上游逐行可比（日后同步 diff 不用区分「删过」和「改过」）。
 # ---------------------------------------------------------------------------

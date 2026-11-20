@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """island_qt/prefs.py — 位置与置顶的跨启动记忆。
 
-文件与键**完全沿用 Electron 版**：`%APPDATA%/wbtool-island/island-prefs.json`，
+文件与键**完全沿用 Electron 版**：`%APPDATA%/WBtool-island/island-prefs.json`，
 内容 `{"x": 本体左上角全局逻辑 x, "y": ..., "pinned": bool}`。
 
 为什么坐标语义能直接复用：Electron 版的窗口就是胶囊本体本身（`setBounds` 不带容器），
@@ -23,7 +23,7 @@ DEFAULT_PINNED = True
 
 def data_dir() -> Path:
     base = os.environ.get("APPDATA") or str(Path.home())
-    d = Path(base) / "wbtool-island"
+    d = Path(base) / "WBtool-island"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

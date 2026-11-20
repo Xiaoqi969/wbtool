@@ -41,7 +41,7 @@
 
 ## 四、许可证
 
-- wisland 为 MIT（`wisland/LICENSE`），wbtool 也是 MIT，可直接移植。
+- wisland 为 MIT（`wisland/LICENSE`），WBtool 也是 MIT，可直接移植。
 - 复用文件（`glass.py` / `anim.py` / `shape.py` 片段）**必须保留 wisland 原版权声明**，已在各文件头加注。
 
 ## 五、B3 追加的移植文件（2026-11-14）
@@ -62,7 +62,7 @@ B6 做展开态明细页时按需取 `Card` / `Themed` 等，届时补记指纹�
 | 类 | 文件 | 与上游的关系 | 上游改了怎么办 |
 |---|---|---|---|
 | **A 直接同步** | `engine/glass.py`、`engine/anim.py`、`engine/shape.py`、`ui/theme.py` | 几乎原件，只多 MIT 头（glass 另有一处 `stop(wait)` 补丁） | 去掉文件头后与上游 diff → 套过来 → 跑 `_probe_b5/b6/b7/b9` 回归 |
-| **B 只读不抄** | `window.py`（1347→831）、`content/compact.py`（719→194） | 结构已分叉，不是同一份代码 | 读懂「修的是哪个问题」→ 判断 wbtool 是否存在该问题 → 按自己的结构改。**禁止整份覆盖** |
+| **B 只读不抄** | `window.py`（1347→831）、`content/compact.py`（719→194） | 结构已分叉，不是同一份代码 | 读懂「修的是哪个问题」→ 判断 WBtool 是否存在该问题 → 按自己的结构改。**禁止整份覆盖** |
 | **C 不用管** | `services/`、`learn/`、`live/`、`pages/`、`widgets.py` | 根本没搬 | 忽略 |
 
 判断信号：commit message 涉及**绘制 / 弹簧 / DPI / 玻璃 / 圆角** → 看 A 类；涉及**具体页面或服务**（天气、Anki、字幕、翻译）→ 基本是 C 类。
@@ -73,7 +73,7 @@ B6 做展开态明细页时按需取 `Card` / `Themed` 等，届时补记指纹�
 2. 上游拉成带历史的仓库再比（本地 `D:\Users\lenovo\Desktop\ALL\wisland` **不是 git 仓库**，无法 diff 版本）：
    `git clone https://github.com/AsamiAkito/wisland /tmp/wisland-up` → `git log --oneline 3f1ec1d..origin/main -- wisland/ui`
 3. **A 类**：把目标文件去掉开头 MIT 头，与上游 diff；若差异只剩上游改动，直接补丁，并保留 `glass.py` 的 `stop(wait)` 补丁。
-4. **B 类**：只读 commit diff 与注释，判断影响面；确需跟进时在 wbtool 侧重写，不合并上游文件。
+4. **B 类**：只读 commit diff 与注释，判断影响面；确需跟进时在 WBtool 侧重写，不合并上游文件。
 5. 同步完更新本文指纹表（行数 / 字节 / sha256 / 日期）与本轮说明，与代码同一个提交。
 
 ### 当前状态（2026-11-15 01:30 实测）

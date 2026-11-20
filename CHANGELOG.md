@@ -1,6 +1,23 @@
 # 更新日志
 
-> 文件说明：记录 wbtool 每个公开版本的变更。格式参考 Keep a Changelog，日期为 `YYYY-MM-DD`。
+> 文件说明：记录 WBtool 每个公开版本的变更。格式参考 Keep a Changelog，日期为 `YYYY-MM-DD`。
+
+## v3.0.0 — 2026-11-21
+
+**产品名由 `wbtool` 统一改为 `WBtool`（破坏性命名变更）。** 功能逻辑不变，所有可见名称、产物文件名、仓库链接、偏好目录、内部标识全量同步。
+
+### 变更范围（25 个文件、213 处）
+
+- **产物名**：`wbtool.exe` → `WBtool.exe`、`wbtool-island.exe` → `WBtool-island.exe`，两个 portable zip 与旧 Electron 版 `WBtool-island-legacy.exe` 同名更新。
+- **品牌与文案**：README、CHANGELOG、CONTRIBUTING、analysis 文档；报告页 `<title>` / 页脚 / `appName`；灵动岛窗口标题、托盘提示、日志前缀。
+- **内部标识**：单实例管道名 `wbtool-island-qt` → `WBtool-island-qt`、偏好与日志目录 `%APPDATA%\wbtool-island\` → `%APPDATA%\WBtool-island\`、备份/回收/报告文件名 `wbtool_backup/` `wbtool_trash/` `wbtool_report.html` 等同步改名。
+- **资产文件**：`assets/wbtool.ico` → `WBtool.ico`、`wbtool-256.png` → `WBtool-256.png`（git mv 保留历史）。
+- **仓库链接**：README 内 `github.com/Xiaoqi969/wbtool` → `github.com/Xiaoqi969/WBtool`（GitHub 仓名大小写不敏感，指向同一仓库）。
+
+### 兼容性说明
+
+- Windows 文件系统与 GitHub 仓库名**均不区分大小写**：旧下载链接 `/download/v2.1.0/wbtool.exe` 与新名 `WBtool.exe` 指向同一路径；旧的 `%APPDATA%\wbtool-island\` 与新目录是同一个文件夹，**已保存的窗口位置与置顶偏好不会丢失**。
+- 升级用户可直接覆盖旧 exe；本次无功能变化，v2.1.0 的所有行为保持不变。
 
 ## v2.1.0 — 2026-11-18
 
@@ -31,7 +48,7 @@
 - **弹簧形变**：宽度 / 高度 / 内容透明度三根独立弹簧（wisland 实测参数），中途反向打断位置与速度连续，收起为精确逆过程并带轻微回弹。圆角 `min(30, h/2, w/2)`——收起是药丸、展开收到 30。
 - **信息分层（本版明确的设计约束）**：收起态只回答「今天用了多少、现在多快」——Token / 积分 / 流速三格数字，**不滚动、不轮播、不展示会话**。旧版收起态的会话名走马灯已删除（常驻屏幕顶端，持续运动会变成干扰，滚动版实测常驻 3.12% CPU）。
 - **展开态**：今日合计 / 输入 / 输出 / 积分四列指标卡 + 进行中会话列表（最多 5 行，多余的显示「还有 N 个会话」）+ 统计范围脚注；高度由内容算定，会话增减时弹簧平滑改高。
-- **新增**：胶囊可**拖拽**到任意位置并记住（`%APPDATA%\wbtool-island\island-prefs.json`，与旧版同文件同键）；**单实例**——重复双击不会开出第二个胶囊，而是把已运行的提到最前；跟随系统**减弱动效**设置热生效。
+- **新增**：胶囊可**拖拽**到任意位置并记住（`%APPDATA%\WBtool-island\island-prefs.json`，与旧版同文件同键）；**单实例**——重复双击不会开出第二个胶囊，而是把已运行的提到最前；跟随系统**减弱动效**设置热生效。
 - **托盘交互调整**：**左键单击托盘图标 = 把胶囊提到最前**（旧版单击是显示/隐藏切换）；处于隐藏状态时单击会先唤回再置前，右键菜单保留「显示/隐藏」「锁定置顶」「退出」三项。顺带消除旧版双击托盘「隐藏→显示闪一下」的观感问题。
 
 ### 口径与数据
@@ -41,11 +58,11 @@
 
 ### 启动优化
 - 首次全量扫描推迟到**首帧呈现之后**启动（另有 1.5s 兜底），避免与绘制争 GIL。
-- `--debug` 新增启动分段计时（import / window / show / first frame / first data），冻结态自动写进 `%APPDATA%\wbtool-island\island-qt.log`。
+- `--debug` 新增启动分段计时（import / window / show / first frame / first data），冻结态自动写进 `%APPDATA%\WBtool-island\island-qt.log`。
 - 已知剩余成本：首次文字度量约 0.9s，其中大头是 **MiSans 字体首次解析**（本机命中，CJK 字体 0.6~0.9s；Segoe UI 仅 29ms）。这是 Qt 字体引擎的一次性开销，与打包方式无关；若要进一步压缩，只能调整字体族优先级（属视觉决策，本版未动）。
 
 ### 兼容性与升级注意
-- **产物命名变更（破坏性）**：`release/wbtool-island.exe` 现在指 **PySide6 版**；旧 Electron 版改名为 `wbtool-island-legacy.exe`，仅在 `python build.py island` 时构建。从 1.3.0 升级直接覆盖安装即可，配置与位置自动沿用。
+- **产物命名变更（破坏性）**：`release/WBtool-island.exe` 现在指 **PySide6 版**；旧 Electron 版改名为 `WBtool-island-legacy.exe`，仅在 `python build.py island` 时构建。从 1.3.0 升级直接覆盖安装即可，配置与位置自动沿用。
 - **`island/` 工程冻结**：源码保留用于回退比对，不再随默认构建产出；要重新打出 legacy 版只需本机有 Node.js / npm（`python build.py island` 会自动 `npm install`，`node_modules` 有 450+ MB，不进仓库），默认构建不涉及。
 - 系统要求不变：Windows 10/11；灵动岛需 Win32 截屏能力（被安全软件禁止时自动降级为中性灰底，文字仍可读，不崩）。
 
@@ -64,12 +81,12 @@
 
 ## v1.2.0 — 2026-11-12
 
-新增「桌面端灵动岛」独立启动器 `wbtool-island.exe`：屏幕顶部正中常驻一个半透明胶囊，**每分钟**增量扫描 jsonl，显示**今日 Token / 积分**与**正在进行中的对话**（固定裁剪区内横向滚动显示完整会话名，多个会话依次轮播）。**左键点击胶囊**会以三段式形变「长大」成明细面板（小胶囊 → 横向铺开成扁胶囊 → 向下展开成圆角矩形；收起为精确逆过程），展开态只显示明细（今日输入/输出/合计 Token、积分、各进行中对话的 Token 与最后活跃时间），再点收回。**系统托盘图标右键**可显示/隐藏、临时提到最前、切换「锁定置顶」以及退出（隐藏只收起胶囊、托盘仍在，随时可再唤起）。
+新增「桌面端灵动岛」独立启动器 `WBtool-island.exe`：屏幕顶部正中常驻一个半透明胶囊，**每分钟**增量扫描 jsonl，显示**今日 Token / 积分**与**正在进行中的对话**（固定裁剪区内横向滚动显示完整会话名，多个会话依次轮播）。**左键点击胶囊**会以三段式形变「长大」成明细面板（小胶囊 → 横向铺开成扁胶囊 → 向下展开成圆角矩形；收起为精确逆过程），展开态只显示明细（今日输入/输出/合计 Token、积分、各进行中对话的 Token 与最后活跃时间），再点收回。**系统托盘图标右键**可显示/隐藏、临时提到最前、切换「锁定置顶」以及退出（隐藏只收起胶囊、托盘仍在，随时可再唤起）。
 
-> 胶囊版基于 **Electron（HTML/CSS/JS）** 渲染：胶囊边缘/圆角为真平滑（无 Tk 锯齿），形变由主进程单一时钟每帧把几何推给渲染层（窗口与内容同一帧），达到 Daozai 级精致度；`wbtool.exe` 仍为零依赖的纯 Python 报告启动器，两个启动器互不干扰。
+> 胶囊版基于 **Electron（HTML/CSS/JS）** 渲染：胶囊边缘/圆角为真平滑（无 Tk 锯齿），形变由主进程单一时钟每帧把几何推给渲染层（窗口与内容同一帧），达到 Daozai 级精致度；`WBtool.exe` 仍为零依赖的纯 Python 报告启动器，两个启动器互不干扰。
 
 ### 设计要点
-- **两个启动器，两条独立技术栈**：`wbtool.exe`（Python + PyInstaller，零第三方运行时依赖，双击只出 HTML 报告）；`wbtool-island.exe`（Electron，双击常驻灵动岛）。`island/` 是独立工程，可单独 `npm install && npm run dist` 构建。
+- **两个启动器，两条独立技术栈**：`WBtool.exe`（Python + PyInstaller，零第三方运行时依赖，双击只出 HTML 报告）；`WBtool-island.exe`（Electron，双击常驻灵动岛）。`island/` 是独立工程，可单独 `npm install && npm run dist` 构建。
 - **口径一致**：`island/src/scanner.js` 严格对齐 `wb_usage_app` 的 `norm_usage` / 本地时间口径——Token 来自 `usage`、积分来自 `rawUsage.credit` 与 `credit-usage` 事件、会话名来自 `aiTitle`、时间用本地时区，与 HTML 报告 100% 一致。
 - **增量扫描**：`scanner.js` 按文件记录「已读字节偏移」，每分钟只读新增行，与日志总大小解耦（68MB 日志也不会反复全量重读）。
 - **精致 UI（Electron 红利）**：CSS 变量 `--h` / `--r` 画胶囊与圆角矩形、固定 `overflow:hidden` 裁剪区内的走马灯、compact/detail 两层绝对定位叠放做交叉淡入淡出、明细用 2×2 网格与 `tabular-nums` 对齐数字、系统托盘用 Electron `Tray`/`Menu` 原生支持。玻璃质感用纯 CSS 模拟（半透明基底 + 左上冷色/右下暖色环境反射 + 顶亮底暗棱边 + 左右冷暖色散 inset 描边 + 顶缘曲面高光 + 对角流光带 + 内侧暗角），强调色小米橙 `#ff7a2f`；不依赖 Win11 Acrylic 等系统版本特性，Win10/11 表现一致且圆角外保持真透明。
@@ -88,23 +105,23 @@
 
 - **形变僵硬**：旧实现窗口逐帧 tween，但内容在点击第 0 帧就 `display:none` 硬切、圆角从 26px 突变到 20px；且 ease-out-quart 起步斜率 4，第一帧宽度就跳约 50px。现改为：单一时钟驱动三段式形变（先横向铺开 → 再纵向向下展开 → 圆角收敛），缓入缓出让起步 3 帧位移仅 0/2/3px；每帧把 `{m,w,h,r}` 推给渲染层，圆角与内容淡入淡出跟窗口同一帧，不再撕裂。收起为精确逆过程且更快（330ms vs 460ms）；中途连点可从当前 `m` 与几何直接反向，不闪跳、不静止。
 - **展开时顶部文字抽搐**：根因是摘要行 `text-align:center` + 数字非等宽，窗口每帧变宽就让文字中心跟着移动，且展开态还重复显示一次 Token/积分。现展开态**整层隐藏顶部摘要**、只显示明细；compact/detail 改为绝对定位叠层（只改 opacity / transform，不参与布局），数字统一 `tabular-nums` 固定宽度，形变期间主进程缓存扫描数据、结束才补发 —— 三管齐下消除重排。
-- **置顶挡住后面的窗口**：托盘右键新增 `锁定置顶（始终最上层）` 复选项（默认勾选，状态记在 `userData/island-prefs.json`）。取消勾选时同时 `setAlwaysOnTop(false)` + `setSkipTaskbar(false)`，任务栏出现「wbtool 灵动岛」实例，点击即可把它唤到最前；重新勾选则恢复 `screen-saver` 级置顶并隐藏任务栏实例。另加 `临时提到最前`（`moveTop()`，不抢焦点、不改锁定状态）作为兜底，重复双击 exe 也走同一路径。窗口显式设了 `title` 与 `icon`，保证任务栏实例有名称与图标。
+- **置顶挡住后面的窗口**：托盘右键新增 `锁定置顶（始终最上层）` 复选项（默认勾选，状态记在 `userData/island-prefs.json`）。取消勾选时同时 `setAlwaysOnTop(false)` + `setSkipTaskbar(false)`，任务栏出现「WBtool 灵动岛」实例，点击即可把它唤到最前；重新勾选则恢复 `screen-saver` 级置顶并隐藏任务栏实例。另加 `临时提到最前`（`moveTop()`，不抢焦点、不改锁定状态）作为兜底，重复双击 exe 也走同一路径。窗口显式设了 `title` 与 `icon`，保证任务栏实例有名称与图标。
   - 已知注意点：Windows 的 `WS_EX_TOOLWINDOW` 变化需窗口重新显示才刷新任务栏按钮，切换时会 hide/show 一次；若个别系统仍不出现任务栏实例，可退回「重建窗口」方案（`skipTaskbar` 在创建时设定必然生效）。
 
 ### 第三轮（2026-11-12）：复用「小米超级岛」弹簧形变引擎与液态玻璃质感
 用户提供了一份独立实现（GLM 产出的「小米超级岛」工程），经核对后整体复用，替换 `island/` 下 4 个文件：`src/main.js`（弹簧物理引擎替换原时间分段曲线）、`src/renderer/island.html` / `.css` / `.js`（液态玻璃质感 + `--de` 错落浮入）。
 
-- **复用前提已逐项校验**：`scanner.js` 与 `assets/icon.ico` 与本项目**完全相同**（数据口径零改动）；`preload.js` 仅注释不同、IPC API 完全一致，故保留本项目版本；`package.json` 不替换，`productName` / `artifactName` 仍是 `wbtool-island`，打包继续走 `python build.py island`。
+- **复用前提已逐项校验**：`scanner.js` 与 `assets/icon.ico` 与本项目**完全相同**（数据口径零改动）；`preload.js` 仅注释不同、IPC API 完全一致，故保留本项目版本；`package.json` 不替换，`productName` / `artifactName` 仍是 `WBtool-island`，打包继续走 `python build.py island`。
 - **契约不变**：`frame` / `morph-end` / `data` / `resize` / `reduced-motion` 五个通道名与载荷字段三方（main / preload / renderer）一致，`scanner.summary()` 的 `{today, active, files, updated}` 结构不变，因此渲染层可整包互换。
 - **沿用的铁律不变**：仅 `390×52` / `620×H` 两个合法终态、屏幕中心只测一次、每帧 X 由固定中心重算绝对值、一次 `setBounds` 原子设定、形变期间缓存扫描数据结束补发、`radiusFor` 同款圆角函数。
 - **质感方案取舍**：最终采用纯 CSS 折射型玻璃模拟，而非 Win11 `backgroundMaterial: 'acrylic'`。实测 Acrylic 在透明 layered 窗口上会让四角露出方形模糊残影；改不透明窗口则 CSS 胶囊圆角与系统窗口圆角之间出现月牙区；`setShape` 逐行条带裁剪可消除月牙但边缘有阶梯锯齿且 API 为 `@experimental`。纯 CSS 方案跨平台一致、圆角外真透明。
-- **品牌回写**：外部实现的 `title` / 托盘菜单 / tooltip 原为「超级岛」，已统一回写成「wbtool 灵动岛」，与 exe 名、任务栏实例名及文档一致；注释中「小米超级岛」作为技术来源保留。
+- **品牌回写**：外部实现的 `title` / 托盘菜单 / tooltip 原为「超级岛」，已统一回写成「WBtool 灵动岛」，与 exe 名、任务栏实例名及文档一致；注释中「小米超级岛」作为技术来源保留。
 - **离线仿真校验**：展开约 720ms / 收起约 656ms 均收敛；连续切换 10 轮终态恒为 `620×188` 与 `390×52`；宽度过冲峰值仅 +1.9px、高度全程不低于 52px（不会裁切胶囊）；展开到 40% 时反向打断，首帧位移 −7.7px 且位置速度连续，无闪跳。
 
 ### 命令行 / 构建
 - 开发预览：`cd island && npm start`（需先 `npm install`）。
 - 仅扫描验证：`node island/src/scanner.js`（无 GUI，打印 JSON 摘要，便于比对口径）。
-- 打包：`python build.py island`（自动 `npm install` + `npm run dist`，产出 `release/wbtool-island.exe` 与 `wbtool-island-portable.zip`）。每次构建用一个全新的 `release/_out-<时间戳>/` 空工作区、由脚本对齐命名后搬到 `release/` 根，避免 electron-builder 去 unlink 被系统进程锁住的旧 `.asar` 时 `EBUSY`；目录版 zip 顶层无文件夹，需先建空文件夹再解压。
+- 打包：`python build.py island`（自动 `npm install` + `npm run dist`，产出 `release/WBtool-island.exe` 与 `WBtool-island-portable.zip`）。每次构建用一个全新的 `release/_out-<时间戳>/` 空工作区、由脚本对齐命名后搬到 `release/` 根，避免 electron-builder 去 unlink 被系统进程锁住的旧 `.asar` 时 `EBUSY`；目录版 zip 顶层无文件夹，需先建空文件夹再解压。
 - 指定 jsonl 目录：环境变量 `WORKBUDDY_PROJECTS_DIR`。
 
 ## v1.1.1 — 2026-11-09
@@ -132,16 +149,16 @@
   因 `file://` 静态页沙箱无权删本地文件，确认后只生成并复制一条命令，由 exe 在命令行执行。
 - 新增 `--clean-preview`（只读预览）、`--clean`（缺 `--yes` 自动降级为预览）、
   `--yes`（唯一会真正执行的开关）、`--mode backup|recycle`（去向）、`--days N`（阈值，同时影响报告面板）。
-- 清理结果生成独立的 `wbtool_clean_report.html` 并自动打开浏览器
+- 清理结果生成独立的 `WBtool_clean_report.html` 并自动打开浏览器
   （`--windowed` exe 没有控制台，结果必须可见），不再覆盖用量报告。
 
 ### 安全设计
 - **默认绝不修改、移动或删除任何原始日志**；不带 `--yes` 的 `--clean` 与 `--clean-preview` 均为只读。
 - 两种去向**都可恢复**：
-  - `backup`：先完整复制到程序所在目录（wbtool 文件夹）下的 `wbtool_backup/<时间戳>/`，
+  - `backup`：先完整复制到程序所在目录（WBtool 文件夹）下的 `WBtool_backup/<时间戳>/`，
     写 `manifest.json` 记录原相对路径，**校验通过后再删原文件**；随时可按 manifest 搬回。
   - `recycle`（默认）：借助 Windows `SHFileOperation`（零第三方依赖）移入**系统回收站**，打开回收站即可还原；
-    非 Windows 平台退化为移动到 `wbtool_trash/`。
+    非 Windows 平台退化为移动到 `WBtool_trash/`。
 - 执行前二次校验：路径仍在日志目录内、后缀仍为 `.jsonl`、大小与预览一致；每批最多 10 个，逐个校验落盘成功。
 - `file://` 静态页的浏览器沙箱无权删除本地文件，因此 HTML 只展示清单、弹窗与命令，
   不假装能直接清理；面板不内联绝对路径或日志正文。
@@ -149,7 +166,7 @@
 ### 说明
 - jsonl 是 WorkBuddy 的会话日志，移走后对应历史会话可能无法在 WorkBuddy 中恢复，
   执行前请务必先跑 `--clean-preview` 确认清单。
-- 同步更新 README 的「数据清理」章节与命令行参数表；`.gitignore` 排除运行时生成的 `wbtool_backup/`、`wbtool_trash/`。
+- 同步更新 README 的「数据清理」章节与命令行参数表；`.gitignore` 排除运行时生成的 `WBtool_backup/`、`WBtool_trash/`。
 
 ## v1.0.0 — 2026-11-09
 

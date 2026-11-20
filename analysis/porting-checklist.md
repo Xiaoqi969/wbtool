@@ -1,7 +1,7 @@
-# wisland → wbtool 引擎移植清单（分批执行）
+# wisland → WBtool 引擎移植清单（分批执行）
 
 - **依据**：`analysis/porting-evaluation.md`（GO 结论、§七 落地顺序、§八 AI 工期校准）
-- **移植范围**：用 wisland 的 Python + PySide6 灵动岛引擎，替换 wbtool 现有的 `island/`（Electron）
+- **移植范围**：用 wisland 的 Python + PySide6 灵动岛引擎，替换 WBtool 现有的 `island/`（Electron）
 - **UI 来源（2026-11-14 用户决策）**：**视觉、尺寸、动效全部直接沿用 wisland**，不复刻 Electron 版的胶囊（原版 390×52 被判定偏大偏胖）。Electron 版只保留功能对照价值，`island.css` 不再作视觉参考。
 - **不动的东西**：`wb_usage_app.py` 的报表逻辑、`build.py` 的主程序分支、README 里「两个启动器互不干扰」的定位
 - **信息层级（2026-11-14 晚 用户决策）**：收起态**只显示三格数字**（Token / 积分 / 流速），**不展示进行中的会话**；会话明细一律放在展开态。
@@ -13,7 +13,7 @@
 
 1. **一次只做一批。** 每批是一个可独立运行、独立验收的单元，AI 执行通常 20–60 分钟，你每次只需花 2–5 分钟看结果。
 2. **每批末尾有「停止点」。** 验收通过才进下一批；不通过就停在这一批继续修，绝不带着半成品往下走。
-3. **新老并存，随时可退。** 新实现放在 `island_qt/`，旧 `island/` 原封不动。任何一批搞砸了，双击旧的 `release/wbtool-island.exe` 照常能用。（B9 之后正式名已归 PySide6 版，旧版产物名改为 `wbtool-island-legacy.exe`。）
+3. **新老并存，随时可退。** 新实现放在 `island_qt/`，旧 `island/` 原封不动。任何一批搞砸了，双击旧的 `release/WBtool-island.exe` 照常能用。（B9 之后正式名已归 PySide6 版，旧版产物名改为 `WBtool-island-legacy.exe`。）
 4. **每批完成做一次本地 commit（不 push）。** 这样单批出问题可以单独回退；整条线做完再一起决定要不要正式发布。
 
 > **实际执行与第 4 条不一致，如实记录**：B0–B9 全程没有逐批 commit，所有改动
@@ -186,7 +186,7 @@
 
 `[x]` 2026-11-14 完成
 
-**为什么**：`island.py` 有 1347 行，但 wbtool 只要其中约 40%。原样搬会把拖拽吸边、颈桥、宠物、媒体控件全带进来——评估报告明确说「**不要**原样搬」。
+**为什么**：`island.py` 有 1347 行，但 WBtool 只要其中约 40%。原样搬会把拖拽吸边、颈桥、宠物、媒体控件全带进来——评估报告明确说「**不要**原样搬」。
 
 **动作**（从 `island.py` 抄骨架，逐段删）
 - **先搬视觉底座（这是「好看」的来源，不是可选项）**：
@@ -199,7 +199,7 @@
   - `paintEvent` 的「阴影 + 玻璃 + 轮廓」三层（946-1028 行，其中 946-966 为主入口）
   - `_request_backdrop()` 的「收起态预截展开尺寸防首帧闪」（902-934 行）
   - 窗口容器尺寸 `WIN_W, WIN_H = 900, 680`（island.py:34，需容纳展开态 + 阴影）
-- **删除**（wbtool 不需要，删掉能省 500+ 行）：
+- **删除**（WBtool 不需要，删掉能省 500+ 行）：
   - 拖拽 / 吸边 / `_nearest_edge` / `_gap_to` / `neck_path` / `drip_path`（461-538、656-671 行）
   - 鼠标穿透模式、全局热键、`ShellHook`、全屏自动隐藏（84-147 行整个类）
   - 多页栈 `show_page` / `_place_nav`（420-450、884-901 行）
@@ -350,7 +350,7 @@
 
 `[x]` 2026-11-14 完成（晚间按用户决策二次修订：删掉走马灯）
 
-> **范围变更 1（2026-11-14 用户要求）**：原计划「按 Electron 版重写 compact」作废。既然整体改用 wisland 的 UI，这一批按 wisland 收起态的**排版语言**重做，数据换成 wbtool 的 Token/积分。
+> **范围变更 1（2026-11-14 用户要求）**：原计划「按 Electron 版重写 compact」作废。既然整体改用 wisland 的 UI，这一批按 wisland 收起态的**排版语言**重做，数据换成 WBtool 的 Token/积分。
 >
 > **范围变更 2（2026-11-14 晚 用户要求）**：**收起态不展示进行中的会话，只在展开态展示**。
 > 首版做的走马灯（`对话 <标题>` 在右区匀速左移、两端 alpha 渐隐、独立 30fps 节拍）整段删除，
@@ -358,7 +358,7 @@
 
 **动作**
 - 新建 `island_qt/content/compact.py`（`class Compact`，156 行），**不照抄 719 行的 `compact.py`**：
-  原文件里 `PetFace`（253 行）、媒体/歌词/字幕、`views` 切页在 wbtool 里全无对应物，
+  原文件里 `PetFace`（253 行）、媒体/歌词/字幕、`views` 切页在 WBtool 里全无对应物，
   留一堆 `return` 的死分支反而要维护。只留三样东西：
   - `paint()` 的分发骨架（clip + alpha 叠加，这里的 alpha 直接从弹簧值乘进颜色）
   - `_paint_idle` / `_paint_activity` 的排版手法：label 用次级色小字、数值用 DemiBold、**共用一条基线**
@@ -486,7 +486,7 @@
 - 单击展开/收起：位移 < `CLICK_SLOP=4px` 算点击（同 `island.js` 的拖拽阈值），越过即转拖拽
 - **拖拽移窗**：整颗胶囊可拖（按本体路径命中，阴影区不响应）；抓起来时若展开则先收回胶囊
 - 拖拽按「光标 − 按下偏移」定位，胶囊相对光标不滑；位置按 `clampPos` 夹回屏内
-- 松开写 `%APPDATA%/wbtool-island/island-prefs.json`（与 Electron 版同一个文件、同一组键），
+- 松开写 `%APPDATA%/WBtool-island/island-prefs.json`（与 Electron 版同一个文件、同一组键），
   退出时再写一次
 - 置顶切换走 `SetWindowPos`，托盘勾选状态从 prefs 恢复，切换即落盘
 - 减弱动效：读 `SPI_GETCLIENTAREAANIMATION`（Windows「辅助功能 → 视觉效果 → 动画效果」，
@@ -551,8 +551,8 @@
   - Qt 插件：确保 `platforms/qwindows.dll`、`styles`、`imageformats` 被收集
   - 排除：`PySide6.QtWebEngine*`、`Qt3D*`、`QtCharts`、`QtMultimedia`（体积大头）
 - **保留** `island` 目标（Electron）不删——直到 B9 验收通过，双轨并存
-- 产物命名区分：`release/wbtool-island-qt.exe`（新版）vs `release/wbtool-island.exe`（旧版），避免覆盖导致无法回退
-  - **B9 收口后改名**：正式名 `wbtool-island.exe` 归 PySide6 版，旧 Electron 版让位成 `wbtool-island-legacy.exe`（理由：升级用户手上的下载链接不能变，且 `all` 模式不再依赖 Node）
+- 产物命名区分：`release/WBtool-island-qt.exe`（新版）vs `release/WBtool-island.exe`（旧版），避免覆盖导致无法回退
+  - **B9 收口后改名**：正式名 `WBtool-island.exe` 归 PySide6 版，旧 Electron 版让位成 `WBtool-island-legacy.exe`（理由：升级用户手上的下载链接不能变，且 `all` 模式不再依赖 Node）
 
 **验收**
 - [x] 新 exe 双击能启动，胶囊与开发模式一致
@@ -596,7 +596,7 @@
    秒退。表现极具迷惑性：旧版 portable 包「双击没反应」、TEMP 里连解包目录都没有，看着像包坏了。
    `_probe_b8.py` 里的 `_child_env()` 专门剥掉它和 `NODE_OPTIONS` —— **不剥，Electron 那列一个数都测不出来**。
 3. **冻结态没有控制台**：`--windowed` 把 `sys.stdout` 置 `None`，`print` 静默丢弃。main.py 加了
-   `_redirect_stdio_if_frozen()`，冻结时把 stdout/stderr 落到 `%APPDATA%/wbtool-island/island-qt.log`
+   `_redirect_stdio_if_frozen()`，冻结时把 stdout/stderr 落到 `%APPDATA%/WBtool-island/island-qt.log`
    （行缓冲）。没有它，`--self-test` 在 exe 里等于没输出。
 
 **其他实现细节**
@@ -604,7 +604,7 @@
   Svg、OpenGL、DBus、Xml、Concurrent、LabsStyleKit + 完整版才有的 WebEngine/Multimedia/Charts/3D/Pdf），
   不写通配；本机只装 Essentials，所以省下的主要是不被静态分析拉进来的模块。
 - `--paths` 同时给 ROOT 与 island_qt（`prefs`/`window` 在同目录、`scanlib` 在父目录）；
-  `--add-data assets/wbtool.ico;assets` —— tray.py 用 `__file__.parent.parent/assets/`，
+  `--add-data assets/WBtool.ico;assets` —— tray.py 用 `__file__.parent.parent/assets/`，
   冻结后 `__file__` 落在 `_MEIPASS/island_qt/`，图标必须落到 `_MEIPASS/assets/`。
 - 单实例锁**不会**被强杀搞坏：QT 的 `QLockFile` 即便 `setStaleLockTime(0)`，锁里记的 pid 已死时
   仍按 stale 处理。实测「杀光两个进程 → 锁文件还在 → 下次启动照常起来」（日志有新的 frozen boot 行）。
@@ -654,14 +654,14 @@
 | 扫描节拍 | 真实 `ScanWorker` 跑 70s | 7 次，相邻间隔恒为 **10.0s** |
 | 常驻 CPU | 剔除首次全量后量 68s | **0.37%**（10 秒间隔 + 增量读，未因缩短间隔上升） |
 | 双屏 / 混合 DPI | 本机仅 1 块屏（1707×1067 dpr1.5） | **未覆盖**，需实机增屏验证 |
-| 杀软 | Windows Defender 签名 1.463.290.0 全盘扫描 `wbtool-island.exe` / `wbtool.exe` / `wbtool-island-portable.zip` | 三者均 **no threats**（0.9~2s 返回） |
+| 杀软 | Windows Defender 签名 1.463.290.0 全盘扫描 `WBtool-island.exe` / `WBtool.exe` / `WBtool-island-portable.zip` | 三者均 **no threats**（0.9~2s 返回） |
 | Win10 22H2 | 本机 Win11 24H2（26100） | **未覆盖**，代码路径无版本分支（GDI 截屏 + `SPI_GETCLIENTAREAANIMATION`） |
 
 ### 本轮同时修的三件事（属于 B9 的「发布前收口」）
 
 1. **扫描间隔 60s → 10s**：Qt 版初版误写 60 秒，导致「流速」60 秒才动一次，相对 v1.3.0（`SCAN_MS=10000`）是功能退化。改回后实测稳态 CPU 0.37%，证明增量读确实增量。
 2. **首份数据前不再显示 0**：扫描要 1.7s，这段时间显示 `Token 0 · 积分 0.00 · 流速 0/s` 会被当成今日真实用量。改为三格破折号占位（亮度 0.34，明确是「还在读」），首份数据到达即替换。
-3. **产物命名归位**：`release/wbtool-island.exe` 从此指 PySide6 版；旧 Electron 版改名 `wbtool-island-legacy.exe`（仅 `build.py island` 产出）。README 的下载/构建/文件清单三处同步。
+3. **产物命名归位**：`release/WBtool-island.exe` 从此指 PySide6 版；旧 Electron 版改名 `WBtool-island-legacy.exe`（仅 `build.py island` 产出）。README 的下载/构建/文件清单三处同步。
 
 ### 启动优化（本轮新增）
 

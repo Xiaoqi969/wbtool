@@ -3,7 +3,7 @@
 # 移植自 wisland —— https://github.com/AsamiAkito/wisland
 # MIT License, Copyright (c) 2026 wisland contributors
 # 原始文件：wisland/wisland/ui/theme.py（273 行 / 9967 字节 / sha256 4eb937a1…）
-# 移植方式：整文件复制，未改逻辑（wbtool 只用 light/dark/auto，其余色板一并保留）
+# 移植方式：整文件复制，未改逻辑（WBtool 只用 light/dark/auto，其余色板一并保留）
 # ---------------------------------------------------------------------------
 """主题：浅色 / 深色毛玻璃配色、字体、图标码位。auto 模式按身后画面亮度自动切换。"""
 from __future__ import annotations

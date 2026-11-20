@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 // ============================================================================
-// scanner.js — wbtool 灵动岛的 jsonl 增量扫描器（Node 版）
+// scanner.js — WBtool 灵动岛的 jsonl 增量扫描器（Node 版）
 // ----------------------------------------------------------------------------
-// 口径严格对齐 wb_usage_app.py / wbtool_island.py：
+// 口径严格对齐 wb_usage_app.py / WBtool_island.py：
 //   - 时间戳：>1e11 视为毫秒，否则秒；本地时间（非 UTC），与 HTML 报告一致
 //   - Token：来自 usage，经 norm_usage 拆出 input/output/total
 //   - 积分：来自 providerData.rawUsage.credit（LLM 调用行）+ type==="credit-usage" 事件

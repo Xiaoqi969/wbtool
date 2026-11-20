@@ -1,16 +1,16 @@
-# 把 wisland 的灵动岛引擎移植到 wbtool 的可行性评估
+# 把 wisland 的灵动岛引擎移植到 WBtool 的可行性评估
 
-- **分析对象**：`D:\Users\lenovo\Desktop\ALL\wisland`（移植源）× `D:\Users\lenovo\Desktop\ALL\wbtool`（移植目标）
+- **分析对象**：`D:\Users\lenovo\Desktop\ALL\wisland`（移植源）× `D:\Users\lenovo\Desktop\ALL\WBtool`（移植目标）
 - **分析日期**：2026-11-12
-- **结论先行**：**可行（GO），但有条件。** 把 wisland 的"纯手工重建、零系统 compositor 依赖"的灵动岛引擎（PySide6 + GDI 毛玻璃 + 贝塞尔几何 + 弹簧物理）抽出来，替换掉 wbtool 当前基于 **Electron** 的灵动岛，技术上完全可行，且是三条可选路线里唯一能在 Win10/11 全版本拿到**真实背景模糊**且不依赖系统版本特性的方案。最大收益是「真毛玻璃 + 构建工具链统一回 Python」；最大代价是灵动岛从「零依赖前端」变成「必须随包携带 PySide6/Qt 运行时（约 40–80MB）」，并需重写 wbtool 专属的内容层、复用/移植 jsonl 扫描器。
+- **结论先行**：**可行（GO），但有条件。** 把 wisland 的"纯手工重建、零系统 compositor 依赖"的灵动岛引擎（PySide6 + GDI 毛玻璃 + 贝塞尔几何 + 弹簧物理）抽出来，替换掉 WBtool 当前基于 **Electron** 的灵动岛，技术上完全可行，且是三条可选路线里唯一能在 Win10/11 全版本拿到**真实背景模糊**且不依赖系统版本特性的方案。最大收益是「真毛玻璃 + 构建工具链统一回 Python」；最大代价是灵动岛从「零依赖前端」变成「必须随包携带 PySide6/Qt 运行时（约 40–80MB）」，并需重写 WBtool 专属的内容层、复用/移植 jsonl 扫描器。
 
-> 说明：本评估按深度项目分析的方法论做（结论必须有代码证据、用对照表与映射表），但只聚焦「移植可行性」这一具体问题，不展开 wisland/wbtool 的完整四角度分析。
+> 说明：本评估按深度项目分析的方法论做（结论必须有代码证据、用对照表与映射表），但只聚焦「移植可行性」这一具体问题，不展开 wisland/WBtool 的完整四角度分析。
 
 ---
 
 ## 一、两套实现的本质差异（对照表）
 
-| 维度 | wisland（移植**源**） | wbtool 现版灵动岛（移植**目标**，待废弃） |
+| 维度 | wisland（移植**源**） | WBtool 现版灵动岛（移植**目标**，待废弃） |
 |---|---|---|
 | 语言 / 框架 | Python + **PySide6 (Qt6)** | Python 主程序（纯标准库）+ **Electron**（`island/`） |
 | 窗口形态 | 无边框 / 分层 / 透明 `Tool` 窗口，全部自绘 | Electron `transparent:true` 透明窗口，HTML/CSS 绘制 |
@@ -23,7 +23,7 @@
 | 构建工具链 | PyInstaller | **PyInstaller（主）+ electron-builder（island）双工具链** |
 | 运行时依赖 | 重（PySide6 + winrt/媒体等约 25 个包） | 主程序**零依赖**；island 需 Node/Electron |
 
-**关键认知**：wbtool 的"灵动岛"目前是一个**独立的 Electron 应用**（`island/package.json` 的 `devDependencies` 含 `electron@^45`、`electron-builder@^26`），而 wbtool 的 Python 主程序 `wb_usage_app.py` 是「纯标准库、零第三方依赖、跑完即退」的报表生成器。两者通过 README 中「两个启动器互不干扰」解耦。因此移植 = **用 wisland 的 Python+PySide6 引擎替换掉 `island/` 这个 Electron 工程**，主程序 `wb_usage_app.py` 一行都不用动。
+**关键认知**：WBtool 的"灵动岛"目前是一个**独立的 Electron 应用**（`island/package.json` 的 `devDependencies` 含 `electron@^45`、`electron-builder@^26`），而 WBtool 的 Python 主程序 `wb_usage_app.py` 是「纯标准库、零第三方依赖、跑完即退」的报表生成器。两者通过 README 中「两个启动器互不干扰」解耦。因此移植 = **用 wisland 的 Python+PySide6 引擎替换掉 `island/` 这个 Electron 工程**，主程序 `wb_usage_app.py` 一行都不用动。
 
 ---
 
@@ -34,26 +34,26 @@ wisland 的灵动岛是一组**自包含模块**，与它的媒体/天气/翻译
 | 模块 | 复用方式 | 证据（文件:行 / 函数） |
 |---|---|---|
 | `wisland/wisland/ui/glass.py`（整个文件） | **整文件复制** | `grab_tiny()` 用 `StretchBlt(HALFTONE)` 把身后画面缩成 1/12 小图（行 69-93）；`exclude_from_capture()` 用 `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` 截屏瞬间自排除（行 49-53）；`Backdrop` 后台线程 + `ready` 信号回主线程（行 96-201）。**这是本次移植的核心价值——真毛玻璃。** |
-| `wisland/wisland/ui/anim.py` 的 `Spring` 类 | **整文件复制** | 半隐式欧拉 + `dt` 钳制防发散；`island.py` 的 `_tick` 用 `dt = min(1/30, max(1/240, …))`（行 556），与 wbtool 现有 `stepSpring` 思路一致。 |
-| `wisland/wisland/ui/shape.py` | **只取 3 个函数** | `body_path()` 独立圆角矩形（行 52）、`deform()` 按速度/按压形变、`edge_corners()`。`neck_path`/`drip_path`（颈桥/残滴）是**拖拽吸边专用**——wbtool 固定顶部居中、不拖拽，**应丢弃**以减负。 |
+| `wisland/wisland/ui/anim.py` 的 `Spring` 类 | **整文件复制** | 半隐式欧拉 + `dt` 钳制防发散；`island.py` 的 `_tick` 用 `dt = min(1/30, max(1/240, …))`（行 556），与 WBtool 现有 `stepSpring` 思路一致。 |
+| `wisland/wisland/ui/shape.py` | **只取 3 个函数** | `body_path()` 独立圆角矩形（行 52）、`deform()` 按速度/按压形变、`edge_corners()`。`neck_path`/`drip_path`（颈桥/残滴）是**拖拽吸边专用**——WBtool 固定顶部居中、不拖拽，**应丢弃**以减负。 |
 | `wisland/wisland/ui/island.py` 的**窗口骨架 + 渲染循环** | **大改后复用** | 无边框/透明/`Tool` 窗口 + `WA_ShowWithoutActivating`（行 217-222）；`PreciseTimer` 16ms（行 300-303）；`_needs_frames()` 空闲停帧/降帧（行 544-553）；`_request_backdrop()` 毛玻璃采样 + **收起态预截展开尺寸防首帧闪**（行 902-934）；`paintEvent` 阴影+玻璃+轮廓+内容（行 946-1028）；DPI 多屏处理（`QScreen.devicePixelRatio()`，glass.py 行 143-147）。 |
-| `wisland/wisland/core/config.py` + `app.py` 的**编排范式** | **范式复用** | `ctx.media.changed.connect(on_media)` → `island._kick()`（app.py 行 226-227）；`QSystemTrayIcon`（行 440-447）；`setQuitOnLastWindowClosed(False)` 常驻（行 114）；`QLockFile` 单实例（行 118-122）。wbtool 新建一个轻量 `app.py`，把「媒体/天气…服务」整体换成「一个 jsonl 扫描服务」。 |
+| `wisland/wisland/core/config.py` + `app.py` 的**编排范式** | **范式复用** | `ctx.media.changed.connect(on_media)` → `island._kick()`（app.py 行 226-227）；`QSystemTrayIcon`（行 440-447）；`setQuitOnLastWindowClosed(False)` 常驻（行 114）；`QLockFile` 单实例（行 118-122）。WBtool 新建一个轻量 `app.py`，把「媒体/天气…服务」整体换成「一个 jsonl 扫描服务」。 |
 
-> 注意：**不要**把整个 wisland `island.py`（1347 行）原样搬过去。它内含拖拽吸边、可穿透模式、热键、ShellHook、全屏隐藏、宠物小形象、多页面栈、媒体控件——wbtool 全都不需要。移植后目标文件应缩到约 600–800 行，只保留「窗口 / 几何 / 玻璃 / 空闲停帧 / 托盘 / 单击展开」这条主线。
+> 注意：**不要**把整个 wisland `island.py`（1347 行）原样搬过去。它内含拖拽吸边、可穿透模式、热键、ShellHook、全屏隐藏、宠物小形象、多页面栈、媒体控件——WBtool 全都不需要。移植后目标文件应缩到约 600–800 行，只保留「窗口 / 几何 / 玻璃 / 空闲停帧 / 托盘 / 单击展开」这条主线。
 
 ---
 
-## 三、必须新建 / 重写部分（wbtool 专属）
+## 三、必须新建 / 重写部分（WBtool 专属）
 
 | 模块 | 做法 | 说明 |
 |---|---|---|
 | **jsonl 扫描服务** | 抽 `wb_usage_app.py` 的解析为共享模块 `scanlib.py`，包成 `QThread`/`QTimer`，每 60s 增量扫描并 `emit summary` | 好消息：`wb_usage_app.py` **已有完整 jsonl 解析口径**，且 `island/src/scanner.js` 注释明确「口径严格对齐 `wb_usage_app.py`」。最佳做法是把解析**抽成主程序与 island 共用的纯 Python 模块**（增量按字节偏移、`ACTIVE_WINDOW_MIN=5`、时间戳 ms/s 判断、`normUsage`、credit 取 `rawUsage.credit`），让报表与灵动岛**永不口径分歧**。数据契约（来自 `scanner.js` 的 `summary()`）：`{ today:{token,credit,in,out}, active:[{name,tokens,last}], files, updated }`。 |
 | **收起态内容（`compact.py` 改写）** | 用即时模式 QPainter 自绘「今日 Token/积分 + 进行中对话走马灯」 | 路线 A（贴合 wisland）：数字用等宽数字防跳动（Qt `QFont` + `drawText`，参考 wisland `tabular-nums` 等价处理），走马灯每帧移动 x 偏移（参考 `island.js` `stepMarquee` 的 `0.6px/帧`）。路线 B（更省事）：用一个小 `QWidget` 内容层把 HTML/CSS 思路平移成 Qt Widgets。**推荐收起态用 A、展开态明细用 B**。 |
-| **展开态明细面板** | 新建一个 `QWidget`（含网格/列表） | wbtool 只需**一个**明细面板（今日 in/out/合计 Token、积分、各进行中对话 token + 最后活跃时间）。复用 wisland 的「形状长到 ~70% 再显示内容、用 `setMask` 裁剪到形状」技巧（`island.py` 行 854-868），即可获得与现在 Electron 一致的「内容不溢出胶囊」效果。 |
-| **三段式形变时序** | 沿用 wisland 思路（w/h 一起弹，靠刚度比自然涌现次序） | wbtool 现有卖点「小胶囊→横铺→下展」三段式，本质来自 `SPRING.expand` 中 `w.k=190 > h.k=110`（w 更硬、先到位，`island/src/main.js` 行 42-53）。wisland `expand()` 也是 `sw.to(w,420,0.62)` / `sh.to(h,420,0.62)`（island.py 行 383-387）同构。**直接沿用这套刚度比即可复现三段感**。 |
-| **构建（`build.py` 改造）** | 删 `electron-builder` 分支，新增 PyInstaller 打包 island | 需处理 PySide6 隐式导入（`PySide6.QtCore` 等）与 Qt 插件 `platforms/qwindows`。wbtool 主程序已在用 PyInstaller，**工具链统一反而比现在更简单**（现在是双工具链）。 |
+| **展开态明细面板** | 新建一个 `QWidget`（含网格/列表） | WBtool 只需**一个**明细面板（今日 in/out/合计 Token、积分、各进行中对话 token + 最后活跃时间）。复用 wisland 的「形状长到 ~70% 再显示内容、用 `setMask` 裁剪到形状」技巧（`island.py` 行 854-868），即可获得与现在 Electron 一致的「内容不溢出胶囊」效果。 |
+| **三段式形变时序** | 沿用 wisland 思路（w/h 一起弹，靠刚度比自然涌现次序） | WBtool 现有卖点「小胶囊→横铺→下展」三段式，本质来自 `SPRING.expand` 中 `w.k=190 > h.k=110`（w 更硬、先到位，`island/src/main.js` 行 42-53）。wisland `expand()` 也是 `sw.to(w,420,0.62)` / `sh.to(h,420,0.62)`（island.py 行 383-387）同构。**直接沿用这套刚度比即可复现三段感**。 |
+| **构建（`build.py` 改造）** | 删 `electron-builder` 分支，新增 PyInstaller 打包 island | 需处理 PySide6 隐式导入（`PySide6.QtCore` 等）与 Qt 插件 `platforms/qwindows`。WBtool 主程序已在用 PyInstaller，**工具链统一反而比现在更简单**（现在是双工具链）。 |
 | **托盘右键菜单** | 照搬现有菜单项成 Qt 菜单 | 「显示/隐藏、临时提到最前、锁定置顶、退出」对应 wisland `build_menu`/`tmenu`（app.py 行 375-447），工作量小。 |
-| **「减弱动效」** | 保留 | wbtool 现有 `prefers-reduced-motion`（island.js + CSS `@media`）；wisland 也有等效处理，需保留（弹簧直接落到终态）。 |
+| **「减弱动效」** | 保留 | WBtool 现有 `prefers-reduced-motion`（island.js + CSS `@media`）；wisland 也有等效处理，需保留（弹簧直接落到终态）。 |
 
 ---
 
@@ -64,9 +64,9 @@ wisland 的灵动岛是一组**自包含模块**，与它的媒体/天气/翻译
 | 1 | **毛玻璃在特殊环境失败**：GDI `StretchBlt` 从桌面 DC 截屏，在部分 GPU/驱动、HDR、或 Win10「不允许应用截屏」隐私设置下可能返回空/黑 | 中 | wisland 已有降级：`brush` 为 `None` 时填 `(128,128,128,200)` 灰底（`glass.py` 行 988）。保留并做专项测试。 |
 | 2 | **wisland 无 git 历史**（此前分析确认：仓库非 git 或 0 提交），无法核对玻璃/几何/物理代码的迭代稳定性与已知 bug | 中 | 代码在 wisland 实际运行中、逻辑完整；移植后做一次 Win10/11 多 DPI/多屏回归即可。 |
 | 3 | **打包体积**：从 Electron 换成 PySide6，体积更小还是更大？ | 低（偏收益） | Electron 单文件 portable 通常 100MB+（含 Chromium 子集）；PySide6 打包后约 40–80MB，且启动更快、内存更低、杀软误报更少（README 已指出 Electron 误报更多）。 |
-| 4 | **许可证**：搬运代码是否合规 | 低 | wisland 与 wbtool 都是 **MIT**（`wisland/LICENSE`、`wbtool/LICENSE`）。可直接移植，但**必须保留 wisland 的 MIT 版权声明**在复用文件头。 |
+| 4 | **许可证**：搬运代码是否合规 | 低 | wisland 与 WBtool 都是 **MIT**（`wisland/LICENSE`、`WBtool/LICENSE`）。可直接移植，但**必须保留 wisland 的 MIT 版权声明**在复用文件头。 |
 | 5 | **中文渲染**：Qt 中文用系统字体（Microsoft YaHei），wisland 已用 `ui_font`/`icon_font`；需确保 PyInstaller 不丢字体 | 低 | Qt 自带字体回退，一般无虞；打包后抽查中文显示。 |
-| 6 | **`wbtool_island.py` 源码缺失**：仓库里有编译产物 `wbtool_island.cpython-313.pyc` 但无 `.py` 源（`scanner.js` 注释却提到它） | 低（历史好奇） | 说明 wbtool 早期可能已有 Python island 启动器、后被 Electron 取代；本次等于**重新引入 Python 启动器**，与历史方向一致，非阻碍。 |
+| 6 | **`WBtool_island.py` 源码缺失**：仓库里有编译产物 `WBtool_island.cpython-313.pyc` 但无 `.py` 源（`scanner.js` 注释却提到它） | 低（历史好奇） | 说明 WBtool 早期可能已有 Python island 启动器、后被 Electron 取代；本次等于**重新引入 Python 启动器**，与历史方向一致，非阻碍。 |
 
 ---
 
@@ -98,7 +98,7 @@ wisland 的灵动岛是一组**自包含模块**，与它的媒体/天气/翻译
 | **B. 移植 wisland 引擎（本评估推荐）** | PySide6+GDI 替换 Electron | ✅ | 中（单 Python 工具链） | 小（Qt） | ✅ | 中（2.5–3 周） |
 | **C. Electron + 系统亚克力** | 用 `window.setBackgroundMaterial('acrylic')` | ⚠️ 仅 Win11、版本相关 | 高 | 大 | ❌ | 中 |
 
-**推荐 B**：它是唯一能在 Win10/11 全版本拿到**真实背景模糊**且不依赖系统版本特性的路径（wbtool README 已明确回避 Acrylic 之类系统特性），同时把工具链统一回 Python，契合 wbtool 的 Python 身份——与用户「可以舍弃 wbtool 原来的灵动岛设计思路」的授权完全吻合。
+**推荐 B**：它是唯一能在 Win10/11 全版本拿到**真实背景模糊**且不依赖系统版本特性的路径（WBtool README 已明确回避 Acrylic 之类系统特性），同时把工具链统一回 Python，契合 WBtool 的 Python 身份——与用户「可以舍弃 WBtool 原来的灵动岛设计思路」的授权完全吻合。
 
 ---
 
@@ -118,8 +118,8 @@ wisland 的灵动岛是一组**自包含模块**，与它的媒体/天气/翻译
 - wisland 窗口/空闲停帧/预截：`wisland/wisland/ui/island.py:217-222`、`:544-553`、`:902-934`
 - wisland 编排范式：`wisland/wisland/app.py:114`、`:118-122`、`:226-227`、`:440-447`
 - wisland 弹簧刚度比：`wisland/wisland/ui/island.py:383-387`
-- wbtool 现有 Electron 岛：`wbtool/island/package.json:43-46`、`wbtool/island/src/main.js:42-53`（SPRING）、`wbtool/island/src/scanner.js:197-210`（summary 契约）
-- wbtool 主程序零依赖：`wbtool/README.md:40`（纯标准库）
+- WBtool 现有 Electron 岛：`WBtool/island/package.json:43-46`、`WBtool/island/src/main.js:42-53`（SPRING）、`WBtool/island/src/scanner.js:197-210`（summary 契约）
+- WBtool 主程序零依赖：`WBtool/README.md:40`（纯标准库）
 
 ---
 
@@ -128,7 +128,7 @@ wisland 的灵动岛是一组**自包含模块**，与它的媒体/天气/翻译
 用户提供了 wisland 的真实仓库 `https://github.com/AsamiAkito/wisland`，据此重新校准工期。新增证据：
 
 - **仓库极新且由 AI 写成**：`created_at = 2026-11-06`，首个代码提交 `2026-11-06T13:31`（"wisland：Windows 液态毛玻璃灵动岛"），末次提交 `2026-11-10`；整个仓库 **≤100 提交、4 天内密集成型**（page=1&per_page=100 已触达出生提交）。**几乎每个提交都带 `Co-Authored-By: Claude Opus 5.5`**——即 wisland 本身就是 **Claude 写的**，89 star、7 fork、MIT、2 open issues。
-- **这给工期一个硬校准锚点**：一个 AI 用约 4 天、~30 次提交，从零造出**整个 wisland**（引擎 + 媒体/天气/翻译/剪贴板/股票/控制/实时字幕等服务 + 安装脚本）。而本次移植只是「复用引擎 + 写 wbtool 专属内容层 + 打包」，范围约为造整个 wisland 的 **30–40%**，且最难的那 60%（引擎）已经写好、且带中文注释、AI 极易读懂。
+- **这给工期一个硬校准锚点**：一个 AI 用约 4 天、~30 次提交，从零造出**整个 wisland**（引擎 + 媒体/天气/翻译/剪贴板/股票/控制/实时字幕等服务 + 安装脚本）。而本次移植只是「复用引擎 + 写 WBtool 专属内容层 + 打包」，范围约为造整个 wisland 的 **30–40%**，且最难的那 60%（引擎）已经写好、且带中文注释、AI 极易读懂。
 - **可直接搬运 wisland 已调好的常量**（弹簧 k/d、模糊半径、颈桥几何）作为默认值，把"调参迭代"这一最耗时的环节大幅压缩——进一步压低工期下界。
 
 ### AI 自动化的能力边界（决定工期的核心）

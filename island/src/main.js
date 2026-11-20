@@ -2,7 +2,7 @@
 // ============================================================================
 // main.js — Electron 主进程（小米超级岛同款形变引擎）
 // ----------------------------------------------------------------------------
-// 与 wbtool 原版（时间分段曲线）的核心区别：
+// 与 WBtool 原版（时间分段曲线）的核心区别：
 //   · 真·弹簧物理：宽度 / 高度 / 内容进度 m 是三根独立弹簧，
 //     每帧半隐式欧拉积分，不按总时长插值。
 //   · 速度连续：动画中途反向打断时，当前位置与速度原样续接、只换目标 ——
@@ -11,14 +11,14 @@
 //     展开时宽度弹簧更硬（先横向铺开）、高度弹簧更软（随后向下落下）；
 //     收起时反过来（先收高、再收宽）。
 //
-// 沿用 wbtool v1.3.0 的全部铁律：
+// 沿用 WBtool v1.3.0 的全部铁律：
 //   1) 只有两个合法终态尺寸：390×52 / 620×H，绝不反推当前窗口尺寸当目标。
 //   2) 屏幕中心只测一次；每帧 X = 固定中心 - 当前宽/2（绝对值），不累积漂移。
 //   3) 一次 setBounds 原子设定位置与尺寸；显式关闭系统窗口阴影。
 //   4) 窗口几何由主进程「单一时钟」驱动，每帧把 {m,w,h,r} 推给渲染层；
 //      渲染层用同一帧数据画圆角与内容淡入淡出 —— 窗口与内容永不撕裂。
 //   5) 形变期间不推扫描数据，避免 DOM 重排让文字抽搐；结束后补发。
-//   6) IPC 契约与 preload API 和 wbtool 完全同名 —— 渲染层可直接互换。
+//   6) IPC 契约与 preload API 和 WBtool 完全同名 —— 渲染层可直接互换。
 //
 // 【v1.4.0 测试版】遮挡问题方案：可拖拽
 //   放弃「鼠标穿透」（胶囊物理上压在标签栏上，穿透与可点击互斥，无解），
@@ -161,7 +161,7 @@ const spring = {
 };
 
 // 圆角：前段保持「半圆胶囊感」（随高度长到 34px 封顶），后段收敛到 20px 圆角矩形。
-// 与 wbtool 同函数 —— 渲染层对 r 的消费完全一致。
+// 与 WBtool 同函数 —— 渲染层对 r 的消费完全一致。
 function radiusFor(m, h) {
   const cap = Math.min(h / 2, 34);
   const p = clamp01((m - 0.45) / 0.55);
@@ -288,7 +288,7 @@ function createWindow() {
     height: PILL_H,
     x: initX,
     y: initY,
-    title: 'wbtool 灵动岛',
+    title: 'WBtool 灵动岛',
     icon: iconPath(),
     frame: false,
     // 透明合成窗口（layered）：跨平台（Win10/11、macOS、Linux 皆可），
@@ -375,8 +375,8 @@ function setPinned(locked) {
   }
   buildTrayMenu();
   if (tray) tray.setToolTip(pinned
-    ? 'wbtool 灵动岛 · 已锁定置顶'
-    : 'wbtool 灵动岛 · 未锁定（任务栏或托盘可唤回）');
+    ? 'WBtool 灵动岛 · 已锁定置顶'
+    : 'WBtool 灵动岛 · 未锁定（任务栏或托盘可唤回）');
 }
 
 function buildTrayMenu() {
@@ -405,8 +405,8 @@ function createTray() {
   tray = new Tray(img);
   buildTrayMenu();
   tray.setToolTip(pinned
-    ? 'wbtool 灵动岛 · 已锁定置顶'
-    : 'wbtool 灵动岛 · 未锁定（任务栏或托盘可唤回）');
+    ? 'WBtool 灵动岛 · 已锁定置顶'
+    : 'WBtool 灵动岛 · 未锁定（任务栏或托盘可唤回）');
   tray.on('click', toggleVisible);
 }
 

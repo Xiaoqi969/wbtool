@@ -2,7 +2,7 @@
 """scanlib.py — WorkBuddy 会话 jsonl 的共享解析内核。
 
 为什么存在
-    wbtool 有两处消费同一批 jsonl：报表（wb_usage_app.py）和灵动岛
+    WBtool 有两处消费同一批 jsonl：报表（wb_usage_app.py）和灵动岛
     （island_qt/scan_service.py）。此前各写一套解析，口径靠注释「严格对齐」维持。
     本模块把「读文件 / 判时间戳单位 / 抽可展示字段」收敛成唯一实现，两边共用。
 

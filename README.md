@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="assets/wbtool-256.png" alt="wbtool logo" width="96">
+  <img src="assets/WBtool-256.png" alt="WBtool logo" width="96">
 </p>
 
-<h1 align="center">wbtool · WorkBuddy 用量统计</h1>
+<h1 align="center">WBtool · WorkBuddy 用量统计</h1>
 
 <p align="center">
   两个完全离线的 Windows 小工具：一份自包含的 <b>HTML 用量报告</b>，一个常驻屏幕顶端的 <b>灵动岛</b>。<br>
   作者 <a href="https://xiaoqilucky.com"><b>小柒</b></a> ·
-  <a href="https://github.com/Xiaoqi969/wbtool">GitHub 仓库</a> ·
-  <a href="https://github.com/Xiaoqi969/wbtool/releases/latest">下载最新版</a> ·
+  <a href="https://github.com/Xiaoqi969/WBtool">GitHub 仓库</a> ·
+  <a href="https://github.com/Xiaoqi969/WBtool/releases/latest">下载最新版</a> ·
   MIT License
 </p>
 
@@ -24,7 +24,7 @@
 
 两个程序，各干一件事，**可以只用其中一个，也可以同时用**。它们共用同一个解析内核 `scanlib.py`，所以灵动岛上的数字和 HTML 报告里的数字永远一致。
 
-| | 🧾 HTML 报告 `wbtool.exe` | 🏝️ 灵动岛 `wbtool-island.exe` |
+| | 🧾 HTML 报告 `WBtool.exe` | 🏝️ 灵动岛 `WBtool-island.exe` |
 |---|---|---|
 | 做什么 | 扫描日志 → 生成一份单文件 HTML 报告 → 打开浏览器 → **程序立即退出** | 屏幕顶部正中常驻一个半透明胶囊，**实时**显示今日用量 |
 | 什么时候用 | 想回顾趋势、看模型/项目分布、清理旧日志 | 想知道「今天用了多少、现在多快」，不想每次都开报告 |
@@ -38,14 +38,14 @@
 
 ## 二、下载与运行
 
-到 [Releases](https://github.com/Xiaoqi969/wbtool/releases/latest) 下载，四个文件按需取：
+到 [Releases](https://github.com/Xiaoqi969/WBtool/releases/latest) 下载，四个文件按需取：
 
 | 文件 | 大小 | 是什么 |
 |---|---|---|
-| `wbtool-island.exe` | 37.0 MB | **灵动岛**，单文件，双击即常驻 |
-| `wbtool-island-portable.zip` | 37.0 MB | 灵动岛目录版，解压后运行 `wbtool-island\wbtool-island.exe` |
-| `wbtool.exe` | 6.3 MB | **HTML 报告**，单文件，双击出报告 |
-| `wbtool-portable.zip` | 6.2 MB | 报告目录版，解压后运行 `wbtool\wbtool.exe` |
+| `WBtool-island.exe` | 37.0 MB | **灵动岛**，单文件，双击即常驻 |
+| `WBtool-island-portable.zip` | 37.0 MB | 灵动岛目录版，解压后运行 `WBtool-island\WBtool-island.exe` |
+| `WBtool.exe` | 6.3 MB | **HTML 报告**，单文件，双击出报告 |
+| `WBtool-portable.zip` | 6.2 MB | 报告目录版，解压后运行 `WBtool\WBtool.exe` |
 
 > 两个程序互不干扰，可以同时装。**功能上目录版与单文件版完全一致**，区别只在打包方式。
 
@@ -62,10 +62,10 @@
 **目录版解压后长这样**（`_internal` 是 Python 运行时，**不要删**）：
 
 ```
-wbtool/                     ← 或 wbtool-island/
-├── wbtool.exe              ← 双击这个（灵动岛版为 wbtool-island.exe）
+WBtool/                     ← 或 WBtool-island/
+├── WBtool.exe              ← 双击这个（灵动岛版为 WBtool-island.exe）
 ├── _internal/              ← 运行时与标准库，勿删
-└── wbtool_report.html      ← 报告版运行后在此生成（含你的本机数据，别公开分享）
+└── WBtool_report.html      ← 报告版运行后在此生成（含你的本机数据，别公开分享）
 ```
 
 > 目录版把依赖外置，所以 exe 更小、启动不用解压；但**总磁盘占用不会变小**，运行时只是从 exe 里搬到了文件夹。
@@ -109,7 +109,7 @@ wbtool/                     ← 或 wbtool-island/
 | 再次双击启动器 | **不会**开出第二个胶囊，而是唤回已在运行的那个 |
 | 系统开启「减弱动效」 | 形变直接跳到终态（热生效，无需重启） |
 
-位置与「锁定置顶」状态存在 `%APPDATA%\wbtool-island\island-prefs.json`，与旧 Electron 版**同一文件同一键**，从 1.x 升级过来位置不变。
+位置与「锁定置顶」状态存在 `%APPDATA%\WBtool-island\island-prefs.json`，与旧 Electron 版**同一文件同一键**，从 1.x 升级过来位置不变。
 
 ### 毛玻璃与开销
 
@@ -127,7 +127,7 @@ wbtool/                     ← 或 wbtool-island/
 | 冷启动（到首个可见窗口） | 8.79 s | **3.2 s**（实测 3.0~3.4 s） |
 | 构建链 | Node.js + electron-builder | `pip install pyinstaller` + `python build.py` |
 
-旧版仍可回退：`python build.py island` 会打出 `wbtool-island-legacy.exe`（需本机有 Node.js / npm，脚本会自动 `npm install`；仓库不存 `node_modules`）。默认构建完全不涉及它。
+旧版仍可回退：`python build.py island` 会打出 `WBtool-island-legacy.exe`（需本机有 Node.js / npm，脚本会自动 `npm install`；仓库不存 `node_modules`）。默认构建完全不涉及它。
 
 ---
 
@@ -175,8 +175,8 @@ wbtool/                     ← 或 wbtool-island/
 ### 报告（不需要任何依赖，Python 3.8+）
 
 ```bash
-git clone https://github.com/Xiaoqi969/wbtool.git
-cd wbtool
+git clone https://github.com/Xiaoqi969/WBtool.git
+cd WBtool
 python wb_usage_app.py              # 生成报告并自动打开浏览器
 python wb_usage_app.py --no-open    # 只生成，不打开
 ```
@@ -190,7 +190,7 @@ python island_qt/main.py --debug   # 额外打印窗口几何、DPI、采样状�
 python island_qt/main.py --self-test 20   # 20 秒后自检并退出（无人值守冒烟）
 ```
 
-> 打包后没有控制台：冻结态下 stdout/stderr 自动落到 `%APPDATA%\wbtool-island\island-qt.log`，
+> 打包后没有控制台：冻结态下 stdout/stderr 自动落到 `%APPDATA%\WBtool-island\island-qt.log`，
 > `--self-test` 的输出就是从这里读的。
 
 想自己打 exe 才需要 `pip install pyinstaller`，然后 `python build.py`（见《十、打包与产物》）。
@@ -216,11 +216,11 @@ python wb_usage_app.py --clean --mode backup --days N --yes    # 备份模式
 | `--days N` | 清除阈值天数，默认 30（两级删除范围见《七、数据清理》） |
 | `--clean-preview` | **只读**：列出可清除的 jsonl 并生成结果页，绝不移动任何文件 |
 | `--clean` | 清理入口；缺少 `--yes` 时自动降级为只读预览 |
-| `--mode` | 清理去向（`--clean --yes` 时生效）：`backup` = 先完整备份到 `wbtool_backup/` 再删原文件；`recycle` = 移入系统回收站（默认） |
+| `--mode` | 清理去向（`--clean --yes` 时生效）：`backup` = 先完整备份到 `WBtool_backup/` 再删原文件；`recycle` = 移入系统回收站（默认） |
 | `--yes` | 仅与 `--clean` 同用才真正执行；默认绝不移动 / 删除文件 |
 | `--version` | 显示版本号 |
 
-环境变量 `WORKBUDDY_PROJECTS_DIR`（优先级低于 `--projects`），灵动岛也认它。运行日志写到 `wbtool.log`（被 `.gitignore` 排除）。
+环境变量 `WORKBUDDY_PROJECTS_DIR`（优先级低于 `--projects`），灵动岛也认它。运行日志写到 `WBtool.log`（被 `.gitignore` 排除）。
 
 ### 灵动岛
 
@@ -251,7 +251,7 @@ python wb_usage_app.py --clean --mode backup --days N --yes    # 备份模式
 
 | 勾选？ | 去向 | 结果 |
 |---|---|---|
-| ✅ 勾选 | **备份模式** | 先完整备份到 `wbtool_backup/<时间戳>/`，再删原文件；随时可搬回 |
+| ✅ 勾选 | **备份模式** | 先完整备份到 `WBtool_backup/<时间戳>/`，再删原文件；随时可搬回 |
 | ❌ 不勾选（默认） | **回收站模式** | 直接移入系统回收站；打开回收站即可还原 |
 
 > ⚠️ 弹窗打开后，「确认清除」按钮会**禁用 3 秒**才可使用，避免误触。
@@ -262,27 +262,27 @@ python wb_usage_app.py --clean --mode backup --days N --yes    # 备份模式
 
 ```bash
 :: 1. 先看清单（只读，绝不移动文件）
-wbtool.exe --clean-preview --days 30
+WBtool.exe --clean-preview --days 30
 
 :: 2. 回收站模式执行（默认；可恢复）
-wbtool.exe --clean --days 30 --yes
+WBtool.exe --clean --days 30 --yes
 
-:: 2'. 备份模式执行（先备份到 wbtool_backup/ 再删原文件）
-wbtool.exe --clean --mode backup --days 30 --yes
+:: 2'. 备份模式执行（先备份到 WBtool_backup/ 再删原文件）
+WBtool.exe --clean --mode backup --days 30 --yes
 ```
 
 > `--clean` **不加 `--yes` 会自动降级为只读预览**；`--clean-preview` 永远只读。
-> 因为 exe 是无控制台的窗口程序，预览与执行结果都会生成 `wbtool_clean_report.html`
+> 因为 exe 是无控制台的窗口程序，预览与执行结果都会生成 `WBtool_clean_report.html`
 > 并自动打开浏览器，你能看到完整清单与去向（备份目录路径 / 回收站）。
 
 ### 备份 ≠ 永久删除
 
-- **备份模式**：文件被**完整复制到**程序所在目录下的 `wbtool_backup/<时间戳>/`，并写 `manifest.json` 记录原相对路径，校验通过后**再删原文件**；需要时按 manifest 搬回即可。
-- **回收站模式**：文件被移入**系统回收站**（借助 Windows `SHFileOperation`，零第三方依赖），不是永久删除，打开回收站就能还原；非 Windows 平台退化为移动到 `wbtool_trash/`。
+- **备份模式**：文件被**完整复制到**程序所在目录下的 `WBtool_backup/<时间戳>/`，并写 `manifest.json` 记录原相对路径，校验通过后**再删原文件**；需要时按 manifest 搬回即可。
+- **回收站模式**：文件被移入**系统回收站**（借助 Windows `SHFileOperation`，零第三方依赖），不是永久删除，打开回收站就能还原；非 Windows 平台退化为移动到 `WBtool_trash/`。
 
 ⚠️ **但请注意**：jsonl 是 WorkBuddy 的会话日志，移走后对应的历史会话可能无法在 WorkBuddy 里恢复。执行前请先用 `--clean-preview` 看清清单，确认这些会话不再需要。
 
-如果你用 `--projects` 或 `WORKBUDDY_PROJECTS_DIR` 指定了别的日志目录，请在命令后补上同样的参数（报告不内联你的绝对路径）。源码运行时把 `wbtool.exe` 换成 `python wb_usage_app.py`。
+如果你用 `--projects` 或 `WORKBUDDY_PROJECTS_DIR` 指定了别的日志目录，请在命令后补上同样的参数（报告不内联你的绝对路径）。源码运行时把 `WBtool.exe` 换成 `python wb_usage_app.py`。
 
 ---
 
@@ -292,7 +292,7 @@ wbtool.exe --clean --mode backup --days 30 --yes
 - 报告只内联统计字段；对话正文、推理文本、工具参数与输出、文件快照内容**一律不会**写进 HTML。灵动岛只把三格数字画在屏幕上，不落盘任何用量明细（偏好文件只存窗口坐标与置顶开关）。
 - 清理面板只列**相对路径**、大小与日期，不内联绝对路径或任何日志正文。
 - ⚠️ 但报告里会包含**你的项目路径、模型名、会话标题和用量数值**，属于个人数据：
-  - 仓库通过 `.gitignore` 排除 `wbtool_report.html`、`wbtool_clean_report.html` 与 `*.log`，**不会**上传；
+  - 仓库通过 `.gitignore` 排除 `WBtool_report.html`、`WBtool_clean_report.html` 与 `*.log`，**不会**上传；
   - 你分享自己生成的报告给别人前，请自行确认是否愿意公开这些信息。
 - 本仓库不含任何真实用户数据，示例与文档均为脱敏内容。
 
@@ -310,7 +310,7 @@ wbtool.exe --clean --mode backup --days 30 --yes
 | 胶囊一直是灰底？ | 截屏被安全软件/远程桌面禁止时自动降级为中性灰底，文字仍可读、不崩；放行后自动恢复毛玻璃 |
 | 启动要 3 秒左右，能更快吗？ | 主要成本是 Qt 字体首次解析（本机 MiSans 约 0.9 s），与打包方式无关；用 `--debug` 可看分段耗时 |
 | 双屏 / Windows 10 支持吗？ | 未做专门实测（开发机为 Win11 单屏）。缩放 67% / 100% / 125% / 150% / 200% 五档已验，胶囊逻辑尺寸恒定；多屏或 Win10 遇到问题请提 Issue |
-| 怎么卸载？ | 删掉 exe（或解压目录）即可；想清干净再删 `%APPDATA%\wbtool-island\`（位置与置顶偏好）。程序不写注册表、不自启 |
+| 怎么卸载？ | 删掉 exe（或解压目录）即可；想清干净再删 `%APPDATA%\WBtool-island\`（位置与置顶偏好）。程序不写注册表、不自启 |
 | 胶囊数字和官网/报告不一致？ | 胶囊与报告共用内核，**逐项相等**，最多差一个刷新周期（10 秒）；与官网属于不同口径，见《四、HTML 报告》里的「数据口径」 |
 
 ---
@@ -329,10 +329,10 @@ python build.py island     # 只构建旧 Electron 版（已弃用，需 Node.js
 
 | 产物 | 说明 |
 |---|---|
-| `wbtool-portable.zip` / `wbtool.exe` | 报告目录版 / 单文件版 |
-| `wbtool-island.exe` | 灵动岛单文件版（PySide6） |
-| `wbtool-island-portable.zip` | 灵动岛目录版（解压后 94.5 MB） |
-| `wbtool-island-legacy.exe` / `-portable.zip` | 旧 Electron 版，仅 `build.py island` 产出，用于回退比对 |
+| `WBtool-portable.zip` / `WBtool.exe` | 报告目录版 / 单文件版 |
+| `WBtool-island.exe` | 灵动岛单文件版（PySide6） |
+| `WBtool-island-portable.zip` | 灵动岛目录版（解压后 94.5 MB） |
+| `WBtool-island-legacy.exe` / `-portable.zip` | 旧 Electron 版，仅 `build.py island` 产出，用于回退比对 |
 
 前置条件：Windows + Python 3.8~3.13 + `pip install pyinstaller`；legacy 目标另需 Node.js / npm。**打灵动岛必须用装了 PySide6 的那个解释器**执行脚本（`pyinstaller_cmd()` 优先当前解释器，就是为避免误用 PATH 上另一套 Python）。中间产物放系统临时目录、结束后自动清理，不污染项目目录。详见 [build.py](build.py) 文件头。
 
@@ -348,11 +348,11 @@ python build.py island     # 只构建旧 Electron 版（已弃用，需 Node.js
 | `island/` | **旧版灵动岛工程（v1.3.0，Electron；2.0.0 起停用）**。仅保留源码用于回退比对，`python build.py island` 可打出 legacy 版。日常构建不需要它。 |
 | `analysis/` | **移植与验收记录**（纯文档）：`porting-evaluation.md` 技术选型评估与「实际落地 vs 评估」对照、`porting-checklist.md` B0–B9 分批实作与逐条实测、`porting-baseline.md` 移植源 wisland 的快照指纹与《上游变动怎么同步》规程。 |
 | `build.py` | **Windows 打包脚本**。报告与灵动岛走 PyInstaller；`island` 目标为旧 Electron 版入口（产物带 `-legacy`）。 |
-| `assets/wbtool.ico` | **exe 图标**：WorkBuddy 官方 logo，11 种尺寸。 |
-| `assets/wbtool-256.png` | **README 展示用小 logo**，由官方图标缩放而来。 |
+| `assets/WBtool.ico` | **exe 图标**：WorkBuddy 官方 logo，11 种尺寸。 |
+| `assets/WBtool-256.png` | **README 展示用小 logo**，由官方图标缩放而来。 |
 | `assets/README.md` | **资源说明**：图标来源、版权声明、替换方法。 |
 | `README.md` | 本文件。 |
-| `CHANGELOG.md` | **版本变更记录**，当前 v2.1.0。 |
+| `CHANGELOG.md` | **版本变更记录**，当前 v3.0.0。 |
 | `CONTRIBUTING.md` | **贡献指南**：本地运行、代码结构、验证清单、隐私红线、提交规范。 |
 | `LICENSE` | **MIT 许可证全文**，Copyright (c) 2026 小柒。不含 `assets/` 图标的授权。 |
 | `.gitignore` | 排除规则：按「个人隐私数据 / 二进制程序 / 构建产物 / 缓存 / 编辑器」分组，每条带注释。 |

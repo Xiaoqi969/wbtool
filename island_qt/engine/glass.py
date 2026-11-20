@@ -140,7 +140,7 @@ class Backdrop(QtCore.QObject):
         """停止采样线程。wait=True 时等它真正退出再返回。
 
         退出流程必须等待：否则线程可能在下一次 capture 完成后 emit 给已经销毁的窗口，
-        抛出 "Signal source has been deleted"。（wbtool 移植时补的参数，默认行为不变）
+        抛出 "Signal source has been deleted"。（WBtool 移植时补的参数，默认行为不变）
         """
         self._stop = True
         self._wake.set()

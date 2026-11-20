@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtNetwork
 
-NAME = "wbtool-island-qt"     # 同一用户机器上固定一个名字
+NAME = "WBtool-island-qt"     # 同一用户机器上固定一个名字
 
 
 def notify_existing(timeout_ms: int = 400) -> bool:
