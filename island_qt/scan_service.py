@@ -43,6 +43,7 @@ from scanlib import (
     RATE_WINDOW_MS,
     IncrementalReader,
     clock_of,
+    custom_titles,
     day_of,
     default_projects_dir,
     to_line,
@@ -64,6 +65,7 @@ class Tracker:
     def __init__(self, root=None) -> None:
         self.root = Path(root) if root else default_projects_dir()
         self.reader = IncrementalReader()
+        self.titles: Dict[str, str] = {}            # sid -> 用户改过的界面名（每轮刷新）
         self.totals: Dict[str, dict] = {}          # day -> {t, cr, in, out}
         self.session_tokens: Dict[str, dict] = {}  # sid -> {day: tokens}
         self.active: Dict[str, dict] = {}          # sid -> {last, title, proj}
@@ -79,6 +81,9 @@ class Tracker:
     # -- 扫描 ---------------------------------------------------------------
     def scan_once(self) -> "Tracker":
         now = dt.datetime.now()
+        # 每轮重读用户改过的会话名：改名是低频操作，但改完希望下一轮（≤10s）就生效。
+        # 只读 SQLite 约 10~30ms，相对首轮扫描 1.7s / 稳态增量可忽略。
+        self.titles = custom_titles()
         if self.root.is_dir():
             self._walk(str(self.root), now)
         cutoff = now - dt.timedelta(minutes=ACTIVE_WINDOW_MIN)
@@ -150,7 +155,7 @@ class Tracker:
             self._recomputing = False
 
     def _process(self, row, fallback_proj: str, now: dt.datetime) -> None:
-        ln = to_line(row, fallback_proj)
+        ln = to_line(row, fallback_proj, self.titles)
         moment, day = row.moment, row.day
 
         # 生成工具的独立积分事件（图片生成等）

@@ -15,7 +15,8 @@
     - 时间戳：>1e11 视为毫秒，否则秒；本地时间，与 HTML 报告一致
     - Token：usage 经 norm_usage 拆出 input/output/total
     - 积分：providerData.rawUsage.credit（LLM 调用行）+ type=="credit-usage" 事件
-    - 会话名：aiTitle，取不到回落到 cwd / "会话"
+    - 会话名：优先 SQLite sessions.custom_title（用户在界面里改过的名字），
+      取不到回落 jsonl 的 aiTitle（AI 自动生成的原始标题），再回落 cwd / "会话"
     - 进行中：最后活动在 ACTIVE_WINDOW_MIN 分钟内
 """
 
@@ -44,6 +45,42 @@ def default_projects_dir() -> Path:
     """会话日志根目录：WORKBUDDY_PROJECTS_DIR 优先，否则 ~/.workbuddy/projects。"""
     env = os.environ.get("WORKBUDDY_PROJECTS_DIR")
     return Path(env) if env else Path.home() / ".workbuddy" / "projects"
+
+
+def default_db_path() -> Path:
+    """会话元数据库：WORKBUDDY_DB_PATH 优先，否则 ~/.workbuddy/workbuddy.db。"""
+    env = os.environ.get("WORKBUDDY_DB_PATH")
+    return Path(env) if env else Path.home() / ".workbuddy" / "workbuddy.db"
+
+
+def custom_titles(db_path=None) -> Dict[str, str]:
+    """读 {sessionId: 用户改过的会话名}；读不到就返回空表，绝不抛错。
+
+    为什么单独读 SQLite：WorkBuddy 改名只写 workbuddy.db 的 sessions 表，
+    jsonl 里的 ai-title 事件是 AI 首次生成时写死的、改名时不会更新。报表和
+    灵动岛要显示用户看到的界面名，必须以库里的 custom_title 为准。
+
+    只读打开（URI mode=ro），不创建、不修改、不加锁升级；库被 WorkBuddy
+    占用或表结构变化时静默回落到 aiTitle，不让用量统计因改名功能挂掉。
+    """
+    from urllib.parse import quote
+
+    path = Path(db_path) if db_path else default_db_path()
+    try:
+        import sqlite3
+        uri = "file:" + quote(str(path), safe="/:") + "?mode=ro"
+        con = sqlite3.connect(uri, uri=True, timeout=0.5)
+        try:
+            rows = con.execute(
+                "SELECT id, custom_title FROM sessions "
+                "WHERE deleted_at IS NULL AND custom_title IS NOT NULL AND custom_title != ''"
+            ).fetchall()
+        finally:
+            con.close()
+        return {sid: title for sid, title in rows
+                if isinstance(sid, str) and isinstance(title, str) and title}
+    except Exception:
+        return {}
 
 
 # ----------------------------------------------------------------------------
@@ -187,8 +224,11 @@ def iter_jsonl(path, *, mtime_ms=None) -> Iterator[Row]:
             yield Row(o, moment, day_of(moment))
 
 
-def to_line(row: Row, fallback_proj: str = "") -> Line:
-    """从 Row 抽出两边都要用的字段。row.data 必须非空。"""
+def to_line(row: Row, fallback_proj: str = "", titles: Optional[Dict[str, str]] = None) -> Line:
+    """从 Row 抽出两边都要用的字段。row.data 必须非空。
+
+    titles 是 custom_titles() 的结果：sid 命中则用用户改过的界面名，
+    否则回落到 aiTitle。不传时行为与旧版完全一致（便于探针/单测）。"""
     o = row.data or {}
     pd = o.get("providerData") if isinstance(o.get("providerData"), dict) else {}
     typ = o.get("type") if isinstance(o.get("type"), str) else UNKNOWN_DAY
@@ -218,13 +258,14 @@ def to_line(row: Row, fallback_proj: str = "") -> Line:
             "resetAt": q.get("reset_at") if isinstance(q.get("reset_at"), str) else "",
         }
 
+    name = (titles or {}).get(sid) or (o.get("aiTitle") if isinstance(o.get("aiTitle"), str) else "")
     return Line(
         typ=typ,
         sid=sid,
         cwd=cwd,
         proj=cwd or fallback_proj,
         pd=pd,
-        title=o.get("aiTitle") if isinstance(o.get("aiTitle"), str) else "",
+        title=name,
         msg=msg,
         nu=nu,
         credit=credit,

@@ -67,13 +67,14 @@ from pathlib import Path
 from scanlib import (
     bump,
     count_image_blocks,
+    custom_titles,
     default_projects_dir,
     iter_jsonl,
     to_line,
     to_moment,
 )
 
-__version__ = "3.0.0"
+__version__ = "3.0.1"
 APP_NAME = "WBtool"
 CLEAN_DAYS_DEFAULT = 30        # 「可清除」阈值（天）：闲置会话中只有全部数据都超过该天数的才清除，可用 --days 覆盖
 KEEP_RECENT_DAYS = 7           # 规则1：近 N 天内有过对话的会话，无论文件多旧都【永不清除】
@@ -209,6 +210,10 @@ def collect_all(projects_dir=None, clean_days=CLEAN_DAYS_DEFAULT):
     quota_latest = {}     # 每个模型最新配额
     total_lines = 0
 
+    # 用户改过的会话名（SQLite sessions.custom_title），一次读取供全部行复用；
+    # 改名只写库不写 jsonl，不读这里报告会一直显示 AI 自动生成的旧标题。
+    titles = custom_titles()
+
     scan_root = Path(projects_dir) if projects_dir else PROJECTS_DIR
     for root, _, files in os.walk(scan_root):
         for fn in files:
@@ -231,7 +236,7 @@ def collect_all(projects_dir=None, clean_days=CLEAN_DAYS_DEFAULT):
                 day = row.day
                 hour = moment.hour if moment else -1
 
-                ln = to_line(row, fallback_proj)
+                ln = to_line(row, fallback_proj, titles)
                 typ, sid, cwd, proj, pd = ln.typ, ln.sid, ln.cwd, ln.proj, ln.pd
 
                 # --- 按天行为聚合 ---
@@ -648,6 +653,17 @@ function svgBars(items,opt){
   const step=Math.max(14,opt.W/items.length);
   const W=Math.max(opt.W,items.length*step+padL+padR), bw=Math.max(6,Math.min(40,step*0.62));
   const max=Math.max(...items.map(d=>d.v),1), plotH=H-padT-padB;
+  // 先算要画标签的下标；末尾日期必定显示，但若它与上一个标签挨得太近，
+  // 就让它顶替上一个——否则 `11-21` / `11-22` 两个标签会叠在一起。
+  const every=opt.labelEvery===undefined?1:Math.max(1,opt.labelEvery);
+  const labelIdx=[];
+  for(let i=0;i<items.length;i+=every) labelIdx.push(i);
+  const last=items.length-1;
+  if(labelIdx[labelIdx.length-1]!==last){
+    if(last-labelIdx[labelIdx.length-1]<every) labelIdx.pop();
+    labelIdx.push(last);
+  }
+  const labelSet=new Set(labelIdx);
   let s=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
   for(let g=0;g<=3;g++){ const y=padT+plotH*g/3;
     s+=`<line x1="${padL}" y1="${y}" x2="${W-4}" y2="${y}" stroke="#eef2f4"/>`;
@@ -655,7 +671,7 @@ function svgBars(items,opt){
   items.forEach((d,i)=>{
     const cx=padL+i*step+step/2, x=cx-bw/2, h=d.v/max*plotH, y=H-padB-h;
     s+=`<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="2" fill="${d.color||'#0aa6b8'}"><title>${esc(d.k)}: ${esc(opt.axis(d.v))}</title></rect>`;
-    if(opt.labelEvery===undefined || i%opt.labelEvery===0 || i===items.length-1)
+    if(labelSet.has(i))
       s+=`<text x="${cx}" y="${H-8}" font-size="9" fill="#8a94a3" text-anchor="middle">${esc(d.k)}</text>`;
   });
   return s+'</svg>';
@@ -666,6 +682,16 @@ function trendBars(days){
   const step=Math.max(15,1000/days.length);
   const W=Math.max(1000,days.length*step+padL+padR), bw=Math.max(8,Math.min(48,step*0.62));
   const max=Math.max(...days.map(d=>d.t),1), plotH=H-padT-padB;
+  // 与 svgBars 同理：末尾日期必定显示，太靠近上一个标签时顶替它
+  const every=Math.max(1,Math.ceil(days.length/12));
+  const labelIdx=[];
+  for(let i=0;i<days.length;i+=every) labelIdx.push(i);
+  const last=days.length-1;
+  if(labelIdx[labelIdx.length-1]!==last){
+    if(last-labelIdx[labelIdx.length-1]<every) labelIdx.pop();
+    labelIdx.push(last);
+  }
+  const labelSet=new Set(labelIdx);
   let s=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
   for(let g=0;g<=4;g++){ const y=padT+plotH*g/4;
     s+=`<line x1="${padL}" y1="${y}" x2="${W-4}" y2="${y}" stroke="#eef2f4"/>`;
@@ -676,8 +702,7 @@ function trendBars(days){
     const tip=`<b>${esc(d.k)}</b><br>合计 ${fmt(d.t)}<br>输入 ${fmt(d.i)} · 输出 ${fmt(d.o)}<br>缓存命中 ${fmt(d.ch)} · 未命中 ${fmt(d.cm)}<br>思考 ${fmt(d.th)} · 积分 ${money(d.cr)}<br>调用 ${fmt(d.n)} 次`;
     s+=`<rect class="bar" x="${x}" y="${yI}" width="${bw}" height="${hI}" rx="2" fill="#0aa6b8" data-tip="${tip}"></rect>`;
     s+=`<rect class="bar" x="${x}" y="${yO}" width="${bw}" height="${hO}" rx="2" fill="#5fd0dc" data-tip="${tip}"></rect>`;
-    const every=Math.max(1,Math.ceil(days.length/12));
-    if(idx%every===0||idx===days.length-1)
+    if(labelSet.has(idx))
       s+=`<text x="${cx}" y="${H-9}" font-size="9" fill="#8a94a3" text-anchor="middle">${esc(d.k.slice(5))}</text>`;
   });
   return s+'</svg>';
