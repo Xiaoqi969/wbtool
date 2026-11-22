@@ -165,6 +165,26 @@ def clock_of(moment: Optional[dt.datetime]) -> str:
     return moment.strftime("%H:%M") if moment else "--:--"
 
 
+def short_proj(path: str) -> str:
+    """项目路径脱敏：去盘符、剥离用户主目录前缀、只留末 3 段。
+
+    供快照落盘前使用——避免把 `c:\\Users\\<name>\\...` 这类完整绝对路径
+    （含 Windows 用户名）写进长期留存的快照文件。分隔符用 `/`（无空格），
+    与报告前端 prettyProj() 的 split 口径一致，保证二次处理幂等。
+    """
+    if not isinstance(path, str) or not path:
+        return ""
+    import re
+    a = re.sub(r"^[a-zA-Z]:[\\/]", "", path).replace("\\", "/").split("/")
+    a = [x for x in a if x]
+    # 剥离 `Users/<name>/` 或 `home/<name>/` 前缀，连用户名一起去掉
+    if len(a) >= 2 and a[0].lower() in ("users", "home", "用户"):
+        a = a[2:]
+    elif len(a) >= 1 and a[0].startswith("~"):
+        a = a[1:]
+    return "/".join(a[-3:] if len(a) > 3 else a)
+
+
 # ----------------------------------------------------------------------------
 # 逐行读取
 # ----------------------------------------------------------------------------

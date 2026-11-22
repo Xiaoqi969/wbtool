@@ -51,6 +51,7 @@ WBtool - WorkBuddy 用量统计（Windows 单文件图形化工具）
 import argparse
 import ctypes
 import datetime as dt
+import hashlib
 import json
 import os
 import platform
@@ -70,11 +71,12 @@ from scanlib import (
     custom_titles,
     default_projects_dir,
     iter_jsonl,
+    short_proj,
     to_line,
     to_moment,
 )
 
-__version__ = "3.0.1"
+__version__ = "3.1.0"
 APP_NAME = "WBtool"
 CLEAN_DAYS_DEFAULT = 30        # 「可清除」阈值（天）：闲置会话中只有全部数据都超过该天数的才清除，可用 --days 覆盖
 KEEP_RECENT_DAYS = 7           # 规则1：近 N 天内有过对话的会话，无论文件多旧都【永不清除】
@@ -325,6 +327,173 @@ def collect_all(projects_dir=None, clean_days=CLEAN_DAYS_DEFAULT):
 
 
 # ----------------------------------------------------------------------------
+# 每日快照持久化
+# ----------------------------------------------------------------------------
+# 目的：jsonl 被清理后，「近 30 天」趋势/模型/项目分布仍能连续。
+# 设计约束（与工具的三条底线一致）：
+#   - 完全本地：只写用户目录 ~/.wbtool/daily_snapshot.json，不联网、不上传；
+#   - 隐私：只存 token / 积分 / 计数等统计数值 + 模型名 + 项目目录名，
+#     绝不写会话正文、推理文本、工具参数/输出、会话 ID 或绝对路径；
+#   - 容错：任何读写异常都静默跳过——快照只影响「历史延续」，绝不让主报告挂掉；
+#   - KB 级：按 天×模型×项目 三维预聚合，实测 28 天约 15 KB（远小于 4.9 MB 原始明细）。
+SNAPSHOT_VERSION = 1
+SNAPSHOT_NAME = "daily_snapshot.json"
+
+# 参与 token 汇总的数值字段（与 aggregate() 的 ZERO 一致，少一个都不行）
+_SNAP_NUM_KEYS = ("i", "o", "t", "c", "cm", "ch", "th", "cr", "oc")
+
+
+def snapshot_dir(projects_dir=None) -> Path:
+    """快照目录：不同 --projects 数据源互不串数据（用路径 hash 派生子目录）。"""
+    root = Path(projects_dir) if projects_dir else PROJECTS_DIR
+    try:
+        key = hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()[:12]
+    except OSError:
+        key = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
+    return HOME / ".wbtool" / "snapshots" / key
+
+
+def _zero_totals():
+    return {k: 0 for k in _SNAP_NUM_KEYS} | {"n": 0}
+
+
+def _add_totals(dst, src):
+    for k in _SNAP_NUM_KEYS:
+        dst[k] += src.get(k, 0)
+    # 真实 record 无 n 字段→记 1 次；已注入的合成 record 带 n（历史调用次数权重）
+    dst["n"] += src.get("n", 1) if isinstance(src.get("n"), int) else 1
+
+
+def load_snapshot(projects_dir=None) -> dict:
+    """读快照 → {"days": {day: {"rows": {...}, "daily": {...}}}}；读不到返回空。
+
+    rows 的键是 "模型\\x1f项目"，值是该组合在当天的 token/积分/调用汇总；
+    daily 是该天原有的行为统计（工具/消息类型/小时/图片等），与报告口径一致。
+    """
+    p = snapshot_dir(projects_dir) / SNAPSHOT_NAME
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(obj, dict) or obj.get("version") != SNAPSHOT_VERSION:
+            return {"days": {}}
+        days = obj.get("days")
+        return {"days": days if isinstance(days, dict) else {}}
+    except (OSError, ValueError, TypeError):
+        return {"days": {}}
+
+
+def save_snapshot(data: dict, projects_dir=None) -> bool:
+    """把本次扫描到的每一天合并进快照（同名天以本次为准，历史天保留）；成功返回 True。
+
+    合并式而非全量替换，是关键：日志被部分/全部清理后重新生成时，本次只扫到
+    少量天，若全量替换就会抹掉旧历史——而那正是快照存在意义。故保留快照里
+    未被本次覆盖的天，实现幂等且抗清理。原子替换（.tmp + os.replace）避免半截文件。
+    """
+    # 本次一条真实记录都没扫到时，直接返回，保持旧快照完全不动。
+    if not any(r.get("d") and r.get("d") != "unknown" for r in data.get("records", [])):
+        return True  # 视为无事可做（非失败）
+
+    # 以已有快照为底，本次扫到的天覆盖同名项
+    days = dict(load_snapshot(projects_dir)["days"])
+    touched = set()
+    for rec in data.get("records", []):
+        d = rec.get("d")
+        if not d or d == "unknown":
+            continue
+        day = days.setdefault(d, {"rows": {}})
+        # 该天若来自旧快照，本次是新扫描，先清空 rows 以全量重算，避免旧值残留叠加
+        if d not in touched:
+            day["rows"] = {}
+            touched.add(d)
+        # 项目路径脱敏后再落盘：只留末 3 段、去盘符，与报告前端 prettyProj 一致。
+        # 绝不把 c:\Users\<name>\... 这类完整绝对路径写进长期留存的快照。
+        key = str(rec.get("m", "unknown")) + "\x1f" + short_proj(rec.get("p", ""))
+        row = day["rows"].setdefault(key, _zero_totals())
+        _add_totals(row, rec)
+    # 行为统计：本次扫到的天用新值覆盖；历史天沿用快照里的旧值
+    daily_src = data.get("daily", {})
+    for d in touched:
+        if d in daily_src:
+            days[d]["daily"] = daily_src[d]
+
+    obj = {
+        "version": SNAPSHOT_VERSION,
+        "updatedAt": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "days": days,
+    }
+    d = snapshot_dir(projects_dir)
+    tmp = d / (SNAPSHOT_NAME + ".tmp")
+    final = d / SNAPSHOT_NAME
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(obj, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, final)
+        return True
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
+def merge_snapshot(data: dict, projects_dir=None) -> dict:
+    """把快照里"jsonl 已不再覆盖"的历史天注入 data，返回统计信息。
+
+    注入方式：每个 天×模型×项目 组合合成一条 record（sessionId 留空，归入 unknown），
+    并把该天的 daily 行为统计并回。范围切换、趋势图、模型/项目分布因此自动连续。
+    已有真实数据的天以 jsonl 为准，不重复注入。
+    """
+    info = {"injected_days": 0, "injected_records": 0, "total_days": 0}
+    snap = load_snapshot(projects_dir)
+    days = snap["days"]
+    info["total_days"] = len(days)
+    live = set(data.get("daily", {}).keys())
+    live_rec_days = {r.get("d") for r in data.get("records", []) if r.get("d")}
+
+    injected_recs = []
+    injected_daily = {}
+    for day, blob in days.items():
+        if not isinstance(day, str) or day in live or day in live_rec_days:
+            continue
+        if not isinstance(blob, dict):
+            continue
+        rows = blob.get("rows", {})
+        if not isinstance(rows, dict):
+            continue
+        added = 0
+        for key, vals in rows.items():
+            if not isinstance(vals, dict):
+                continue
+            parts = str(key).split("\x1f", 1)
+            model = parts[0] if parts else "unknown"
+            proj = parts[1] if len(parts) > 1 else ""
+            rec = {"d": day, "h": -1, "m": model, "p": proj, "s": ""}
+            for k in _SNAP_NUM_KEYS:
+                rec[k] = vals.get(k, 0)
+            # 快照存的是该组合当天的汇总值，一条 record 即可表达；
+            # 调用次数用可选字段 n 单独携带（前端 addTo 按 r.n||1 累加），
+            # 避免"复制 n 条带完整汇总的记录"导致 token 被放大 n 倍。
+            n = max(1, min(int(vals.get("n", 1) or 1), 100000))
+            rec["n"] = n
+            injected_recs.append(rec)
+            added += n
+        if added:
+            info["injected_days"] += 1
+            info["injected_records"] += added
+        dly = blob.get("daily")
+        if isinstance(dly, dict):
+            injected_daily[day] = dly
+
+    if injected_recs:
+        data["records"] = list(data.get("records", [])) + injected_recs
+    if injected_daily:
+        merged_daily = dict(data.get("daily", {}))
+        merged_daily.update(injected_daily)
+        data["daily"] = merged_daily
+    return info
+
+
+# ----------------------------------------------------------------------------
 # HTML 报告模板（浅色 + 青蓝强调，全部可展示维度）
 # ----------------------------------------------------------------------------
 HTML_TEMPLATE = r"""<!doctype html>
@@ -357,6 +526,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
 .ranges button:hover{color:var(--teal-d)}
 .ranges button.on{background:#fff;color:var(--teal-d);font-weight:700;box-shadow:0 1px 3px rgba(16,24,40,.12)}
 .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}
+.snap-note{background:var(--teal-soft);border:1px solid #cbeaee;color:var(--teal-d);border-radius:10px;padding:9px 14px;font-size:12.5px;line-height:1.6;margin:0 0 16px}
 .pcard{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:var(--shadow);display:flex;flex-direction:column}
 .pcard .pt{font-size:13px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px}
 .pcard .pt .dot{width:9px;height:9px;border-radius:50%;background:var(--teal)}
@@ -471,6 +641,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
   </div>
 
   <div class="cards" id="cards"></div>
+  <div id="snapshotNote"></div>
   <div class="ov" id="overview"></div>
 
   <div class="panel">
@@ -605,7 +776,7 @@ function rangeDaily(N){
   return out;
 }
 const ZERO = () => ({i:0,o:0,t:0,c:0,cm:0,ch:0,th:0,cr:0,oc:0,n:0});
-function addTo(b,r){ b.i+=r.i;b.o+=r.o;b.t+=r.t;b.c+=r.c;b.cm+=r.cm;b.ch+=r.ch;b.th+=r.th;b.cr+=r.cr;b.oc+=r.oc;b.n++; }
+function addTo(b,r){ b.i+=r.i;b.o+=r.o;b.t+=r.t;b.c+=r.c;b.cm+=r.cm;b.ch+=r.ch;b.th+=r.th;b.cr+=r.cr;b.oc+=r.oc;b.n+=(r.n||1); }
 function aggregate(recs){
   const total=ZERO(), byDay={}, byModel={}, byProj={}, bySession={};
   const add=(b,k,r)=>{ if(!b[k])b[k]=ZERO(); addTo(b[k],r); };
@@ -907,6 +1078,12 @@ function copyText(text,btn){
 }
 
 document.getElementById('meta').innerHTML='数据更新于 '+esc(DATA.generatedAt)+'<br>共 '+DATA.records.length+' 次调用 / '+fmt(DATA.totalLines)+' 行日志 · '+esc(DATA.appName||'WBtool')+' v'+esc(DATA.appVersion||'');
+(function(){
+  const s=DATA.snapshot;
+  if(s && s.injected_days>0){
+    document.getElementById('snapshotNote').innerHTML='<div class="snap-note">本地快照已补回 '+s.injected_days+' 个已清理的历史天（'+fmt(s.injected_records)+' 条汇总），趋势保持连续；分布类图表仅含仍存在的日志明细。</div>';
+  }
+})();
 document.getElementById('cards').innerHTML=periodCard('今天',1)+periodCard('近 7 天',7)+periodCard('近 30 天',30);
 document.querySelectorAll('#ranges button').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('#ranges button').forEach(x=>x.classList.remove('on'));
@@ -1332,16 +1509,25 @@ def build_report(projects_dir, out=None, do_open=True, clean_days=CLEAN_DAYS_DEF
 
     log_line(f"开始扫描 {root}")
     data = collect_all(root, clean_days)
-    if data["totalLines"] == 0:
+    # 历史延续：先用"本次真实扫到的数据"更新快照（必须在注入前，避免把历史天回写放大），
+    # 再把快照里已被清理的历史天注入报告。二者各自容错，不影响主流程。
+    saved = save_snapshot(data, root)
+    snap_info = merge_snapshot(data, root)
+    data["snapshot"] = snap_info
+    if snap_info["injected_days"]:
+        log_line(f"从本地快照恢复了 {snap_info['injected_days']} 个已清理的历史天"
+                 f"（{snap_info['injected_records']} 条汇总），趋势保持连续"
+                 + ("" if saved else "（本次快照落盘失败，仅内存恢复）"))
+    if data["totalLines"] == 0 and not data["records"]:
         html = notice_html("数据目录里还没有会话记录", [
             "已找到目录：" + str(root),
-            "但目录中没有可读取的 .jsonl 会话日志。",
+            "但目录中没有可读取的 .jsonl 会话日志，本地快照里也没有历史数据。",
             "使用 WorkBuddy 进行几次对话后，再运行本工具即可。",
         ])
         p = write_report(html, out)
         if do_open:
             open_report(p)
-        log_line(f"目录内无 jsonl：{root} → 已生成提示页 {p}")
+        log_line(f"目录内无 jsonl 且无快照：{root} → 已生成提示页 {p}")
         return p, 0, 0
 
     data["today"] = dt.date.today().strftime("%Y-%m-%d")
