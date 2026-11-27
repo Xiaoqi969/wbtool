@@ -33,7 +33,7 @@ from ctypes import wintypes
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from content.compact import Compact
-from content.detail import DetailPage
+from content.detail import QUOTA_CYCLE_SEC, DetailPage
 from engine.anim import Spring, clamp
 from engine.glass import Backdrop
 from engine.shape import body_path, body_points, deform, poly_path
@@ -190,6 +190,11 @@ class IslandWindow(QtWidgets.QWidget):
         self._poll.setInterval(200)
         self._poll.timeout.connect(self._request_backdrop)
 
+        # ---- 额度卡轮播（模型多于一个时自动轮流展示；收起态不画，所以跟着展开/收起开关）----
+        self._quota_cycle = QtCore.QTimer(self)
+        self._quota_cycle.setInterval(int(QUOTA_CYCLE_SEC * 1000))
+        self._quota_cycle.timeout.connect(self._on_quota_cycle)
+
         # ---- 背景缓存（静止时阴影+玻璃+轮廓的合成图；滚动帧只贴图不重画）----
         self._bg_pm: QtGui.QPixmap | None = None
         self._bg_at = QtCore.QPoint(0, 0)
@@ -287,6 +292,7 @@ class IslandWindow(QtWidgets.QWidget):
         self._save_pos()
         self.timer.stop()
         self._poll.stop()
+        self._quota_cycle.stop()
         self.backdrop.stop(wait=True)      # 必须等采样线程收工，否则它会 emit 给已销毁的窗口
         super().closeEvent(e)
 
@@ -307,8 +313,10 @@ class IslandWindow(QtWidgets.QWidget):
             self.show()
             self._request_backdrop(urgent=True)
             self._kick()
+            self._sync_quota_timer()     # 隐藏期间停掉的轮播，显示回来要接着转
         else:
             self._poll.stop()        # 隐藏时别再按 0.5Hz 截屏，省 CPU
+            self._quota_cycle.stop()  # 看不见的东西不用轮播
             self.timer.stop()
             self.hide()
 
@@ -323,6 +331,8 @@ class IslandWindow(QtWidgets.QWidget):
         if self.expanded:
             return
         self.expanded = True
+        self.detail.quota_reset_cycle()    # 展开第一眼先看「已用最多」的那个模型
+        self._sync_quota_timer()
         self._reset_floor()
         w, h = self.target_size()
         if self.reduced:
@@ -338,6 +348,7 @@ class IslandWindow(QtWidgets.QWidget):
         if not self.expanded:
             return
         self.expanded = False
+        self._quota_cycle.stop()          # 收起态不画额度卡，定时器跟着停，别在背后空转
         w, h = self.target_size()
         if self.reduced:
             self._snap_to_end(False, w, h)
@@ -578,12 +589,33 @@ class IslandWindow(QtWidgets.QWidget):
         self.summary = data or {}
         compact_changed = self.compact.set_summary(self.summary)
         detail_changed = self.detail.set_summary(self.summary)
+        self._sync_quota_timer()          # 模型数变了（首个配额出现 / 最后一个过期）要跟着开关
         if self._sync_exp_height():
             self.update(self._dirty_rect())        # 展开态：高度在动，内容也在动
         elif compact_changed and not self.expanded:
             self.update(self._dirty_rect())
         elif detail_changed and self.expanded:
             self.update(self._dirty_rect())
+
+    # ---- 额度卡轮播 ----
+    def _sync_quota_timer(self) -> None:
+        """只有展开态、且额度卡里不止一个模型时才需要轮播。"""
+        if self.expanded and self.detail.quota_count() > 1:
+            if not self._quota_cycle.isActive():
+                self._quota_cycle.start()
+        elif self._quota_cycle.isActive():
+            self._quota_cycle.stop()
+
+    def _on_quota_cycle(self) -> None:
+        if not self.expanded:
+            return
+        # 减弱动效时不淡入：淡入本身也是动画，用户既然要求减弱就不该每 4 秒来一次
+        if not self.detail.quota_cycle(fade=not self.reduced):
+            self._quota_cycle.stop()      # 只剩一个模型了，没必要再转
+            return
+        self.update(self._dirty_rect())
+        if not self.reduced:
+            self._kick()                  # 淡入要出帧；跑完由 _needs_frames 自然停
 
     def compact_text(self) -> str:
         return self.compact.plain_text()
@@ -654,12 +686,12 @@ class IslandWindow(QtWidgets.QWidget):
                 and self.compact_a.rest and self._bd_prev is None)
 
     def _needs_frames(self) -> bool:
-        """空闲停帧：没在交叉淡入 / 没有形变，就让 16ms 循环彻底停下。
+        """空闲停帧：没在交叉淡入 / 没有形变 / 额度卡不在切换淡入，就让 16ms 循环彻底停下。
 
         收起态内容恒为三格静态文字（会话明细只在展开态），因此静止时没有第二种
         需要持续出帧的东西 —— 停帧就是真的停。
         """
-        return not self._settled()
+        return not self._settled() or self.detail.quota_animating()
 
     def _tick(self) -> None:
         now = time.perf_counter()

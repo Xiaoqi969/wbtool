@@ -78,7 +78,7 @@ from scanlib import (
     to_moment,
 )
 
-__version__ = "3.2.0"
+__version__ = "3.3.0"
 APP_NAME = "WBtool"
 CLEAN_DAYS_DEFAULT = 30        # 「可清除」阈值（天）：闲置会话中只有全部数据都超过该天数的才清除，可用 --days 覆盖
 KEEP_RECENT_DAYS = 7           # 规则1：近 N 天内有过对话的会话，无论文件多旧都【永不清除】

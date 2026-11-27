@@ -48,6 +48,13 @@ QUOTA_CHART_H = 42.0
 QUOTA_AXIS_H = 12.0
 QUOTA_WARN = 80.0        # 已用 ≥80% 转警示色（琥珀），≥95% 的文字性提示由百分比本身承担
 
+# 额度卡轮播：模型多于一个时自动轮流展示，每个停留 4s。
+# 为什么是 4s：淡入 0.3s 之后至少要看 3.5s，才读得出一条 42px 高的曲线是陡爬还是平走；
+# 再快就成了闪烁。同时 4s 与 10s 扫描节拍互质得不算糟（4 个模型一轮 16s，一轮里至少
+# 有一次刷新），切回来时数据确实是新的。
+QUOTA_CYCLE_SEC = 4.0
+QUOTA_FADE_SEC = 0.30    # 换模型时的淡入时长；首帧不是从 0 起，见 _quota_fade_alpha
+
 # 会话行内的上下文进度条：26px 细条 + 5px 间距 + 29px 百分比，合计一列 60
 CTX_BAR_W = 26.0
 CTX_BAR_H = 3.4
@@ -103,6 +110,8 @@ class DetailPage:
         self._sessions: list[tuple[str, float, float, str, float | None]] = []
         # [{"model", "percent", "resetAt", "series": [(毫秒, 已用%), ...]}]，已用最多的排第一
         self._quota: list[dict] = []
+        self._quota_idx = 0          # 当前正在展示的那个模型（轮播指针）
+        self._quota_fade_t0 = 0.0    # 本轮切换的起点（perf_counter）；0 = 不在动画里
 
     # ================================================================ 数据
     def set_summary(self, data: dict) -> bool:
@@ -112,6 +121,10 @@ class DetailPage:
         sessions = [(str(a.get("name") or "会话"), float(a.get("tokens") or 0),
                      float(a.get("rate") or 0), str(a.get("last") or ""), _ctx_pct(a))
                     for a in (s.get("active") or [])]
+        # 轮播指针不能跟着列表下标走：quota 是按「已用%」降序排的，用着用着顺序就会变，
+        # 按 index 保持会让正在看的那张卡每 10s 跳到别的模型上。改按 (模型, 窗口) 记住它。
+        prev_key = self._quota_key()
+        was_empty = not self._quota
         quota = _parse_quota(s.get("quota"))
         new = (float(t.get("token") or 0), float(t.get("in") or 0), float(t.get("out") or 0),
                float(t.get("credit") or 0), float(t.get("ratePerSec") or 0),
@@ -122,7 +135,74 @@ class DetailPage:
             return False
         (self._token, self._in, self._out, self._credit, self._rate,
          self._files, self._updated, self._sessions, self._quota) = new
+        self._sync_quota_idx(prev_key, was_empty)
         return True
+
+    # ---- 额度卡轮播 -------------------------------------------------------
+    def _quota_key(self) -> tuple | None:
+        if not self._quota:
+            return None
+        q = self._quota[self._quota_idx % len(self._quota)]
+        return (q["model"], q["resetAt"])
+
+    def _sync_quota_idx(self, prev_key: tuple | None, was_empty: bool) -> None:
+        """数据刷新后把指针挪回「同一个模型」，而不是「同一个下标」。"""
+        if not self._quota:
+            self._quota_idx = 0
+            self._quota_fade_t0 = 0.0
+            return
+        if prev_key is not None:
+            for i, q in enumerate(self._quota):
+                if (q["model"], q["resetAt"]) == prev_key:
+                    self._quota_idx = i
+                    return
+        # 在看的模型没了（窗口过期）：回到「已用最多」那张。已经在展示别的卡时给一次
+        # 淡入，好让眼睛知道内容换了；首次出卡直接落定，不要凭空闪一下。
+        self._quota_idx = 0
+        self._quota_fade_t0 = 0.0 if was_empty else time.perf_counter()
+
+    def quota_count(self) -> int:
+        return len(self._quota)
+
+    def quota_reset_cycle(self) -> None:
+        """重新展开时回到第一张（已用最多的那个）。
+
+        收起期间指针停在哪张没有意义 —— 每次展开的第一眼应该是「最该被看见的」，
+        而不是上次关面板时正轮到的那个。
+        """
+        self._quota_idx = 0
+        self._quota_fade_t0 = 0.0
+
+    def quota_cycle(self, now: float | None = None, fade: bool = True) -> bool:
+        """切到下一个模型。只有一个模型时什么都不做 —— 轮播得有两个才有意义。"""
+        if len(self._quota) < 2:
+            return False
+        self._quota_idx = (self._quota_idx + 1) % len(self._quota)
+        self._quota_fade_t0 = (time.perf_counter() if now is None else now) if fade else 0.0
+        return True
+
+    def quota_animating(self, now: float | None = None) -> bool:
+        """淡入还没跑完（window 用它决定这一刻要不要继续出帧）。"""
+        if not self._quota_fade_t0:
+            return False
+        t = time.perf_counter() if now is None else now
+        return (t - self._quota_fade_t0) < QUOTA_FADE_SEC
+
+    def _quota_fade_alpha(self, a: float) -> float:
+        """切换后的淡入系数：从 0.3 起而不是 0。
+
+        从 0 起会让那张卡先空 0.3s（卡底还在，内容没了），看起来像渲染掉了；
+        0.3 → 1 的短淡入读起来是「换了一张」而不是「卡坏了」。
+        """
+        if not self._quota_fade_t0:
+            return a
+        t = (time.perf_counter() - self._quota_fade_t0) / QUOTA_FADE_SEC
+        if t >= 1.0:
+            self._quota_fade_t0 = 0.0
+            return a
+        t = max(0.0, t)
+        ease = 1.0 - (1.0 - t) ** 3          # ease-out cubic，尾部不拖
+        return a * (0.3 + 0.7 * ease)
 
     # ================================================================ 高度
     def _rows(self) -> int:
@@ -216,14 +296,16 @@ class DetailPage:
         self._card(p, card, a)
         inner_l = card.left() + CARD_PAD_X
         inner_r = card.right() - CARD_PAD_X
-        q = self._quota[0]
+        q = self._quota[self._quota_idx % len(self._quota)]
         pct = float(q["percent"])
         hot = pct >= QUOTA_WARN
+        # 卡底用 a、内容用 fa：切换模型时只有内容淡入，卡片本身不该跟着一闪
+        fa = self._quota_fade_alpha(a)
 
         # --- 标题行：左「额度 + 模型名」，右「已用 N% · HH:MM 重置」---
         ty = card.top() + QUOTA_PAD_T
         p.setFont(self.f_sec)
-        p.setPen(theme.text2(a))
+        p.setPen(theme.text2(fa))
         p.drawText(QtCore.QRectF(inner_l, ty, 60, QUOTA_TITLE_H),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, SEC_QUOTA)
 
@@ -233,19 +315,21 @@ class DetailPage:
         w_pct = self._fm_pct.horizontalAdvance(pct_txt)
         x_pct = inner_r - w_right - 6 - w_pct
         p.setFont(self.f_pct)
-        p.setPen(theme.warn(a) if hot else theme.text(0.95 * a))
+        p.setPen(theme.warn(fa) if hot else theme.text(0.95 * fa))
         p.drawText(QtCore.QRectF(x_pct, ty, w_pct, QUOTA_TITLE_H),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, pct_txt)
         p.setFont(self.f_time)
-        p.setPen(theme.text3(a))
+        p.setPen(theme.text3(fa))
         p.drawText(QtCore.QRectF(inner_r - w_right, ty, w_right, QUOTA_TITLE_H),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, right_txt)
 
-        # 模型名夹在两者之间，长了就省略（模型名最坏也就 20 字符，正常放得下）
+        # 模型名夹在两者之间，长了就省略（模型名最坏也就 20 字符，正常放得下）。
+        # 用 text2 而不是 text3：轮播时模型名是「现在看的是谁」的唯一标识，
+        # 太淡会让人以为这张卡一直没变过。
         x_model = inner_l + self._fm_sec.horizontalAdvance(SEC_QUOTA) + 7
         model_w = max(0.0, x_pct - 10 - x_model)
         p.setFont(self.f_meta)
-        p.setPen(theme.text3(a))
+        p.setPen(theme.text2(0.9 * fa))
         p.drawText(QtCore.QRectF(x_model, ty, model_w, QUOTA_TITLE_H),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    self._fm_meta.elidedText(str(q["model"]),
@@ -254,12 +338,12 @@ class DetailPage:
         # --- 曲线 ---
         cy = ty + QUOTA_TITLE_H + 8.0
         chart = QtCore.QRectF(inner_l, cy, inner_r - inner_l, QUOTA_CHART_H)
-        self._paint_curve(p, chart, q["series"], a, hot)
+        self._paint_curve(p, chart, q["series"], fa, hot)
 
-        # --- 轴标签行：左「HH:MM 起」，右「现在 HH:MM」，中间放其他模型的当前值 ---
+        # --- 轴标签行：左「HH:MM 起」，右「现在 HH:MM」，中间是轮播指示 ---
         ay = chart.bottom() + 3.0
         p.setFont(self.f_time)
-        p.setPen(theme.text3(0.9 * a))
+        p.setPen(theme.text3(0.9 * fa))
         start_txt = _start_text(q["series"][0][0])
         p.drawText(QtCore.QRectF(inner_l, ay, 130, QUOTA_AXIS_H),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, start_txt)
@@ -269,19 +353,45 @@ class DetailPage:
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, now_txt)
 
         if len(self._quota) > 1:
-            others = "另有 " + " · ".join(
-                f"{o['model']} {float(o['percent']):.0f}%" for o in self._quota[1:3])
-            if len(self._quota) > 3:
-                others += f" · 另 {len(self._quota) - 3} 个"
-            x0 = inner_l + self._fm_time.horizontalAdvance(start_txt) + 14
-            room = (inner_r - w_now - 12) - x0
-            if room > 40:
-                p.setPen(theme.text3(0.72 * a))
-                p.drawText(QtCore.QRectF(x0, ay, room, QUOTA_AXIS_H),
-                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                           self._fm_time.elidedText(others, QtCore.Qt.TextElideMode.ElideRight,
-                                                    int(room)))
+            x0 = inner_l + self._fm_time.horizontalAdvance(start_txt) + 18
+            self._paint_cycle(p, x0, ay, inner_r - w_now - 12, fa)
         return card.bottom()
+
+    def _paint_cycle(self, p: QtGui.QPainter, x0: float, ay: float,
+                     x_end: float, fa: float) -> None:
+        """轮播指示：一个模型一个点，当前那个拉成短胶囊。
+
+        为什么不再写「另有 xxx 41% · hy4 12%」：改成轮播之后每个模型都会轮到自己被完整
+        展示，摘要行就成了重复信息，还会让人误以为那几行永远不显示。点阵只回答
+        「有几个、现在第几个」，一眼扫完不占阅读。
+        """
+        n = len(self._quota)
+        cur = self._quota_idx % n
+        cy = ay + QUOTA_AXIS_H / 2.0
+        p.setPen(Qt.PenStyle.NoPen)
+
+        slot = 9.0
+        if n <= 6 and x0 + n * slot <= x_end:
+            x = x0
+            for i in range(n):
+                w = 9.0 if i == cur else 4.0
+                if i == cur:
+                    col = theme.accent
+                    col.setAlphaF(min(1.0, 0.95 * fa))
+                    p.setBrush(col)
+                else:
+                    # 0.34 的 text3 在真机深色玻璃上几乎看不见（预览图的假背景更亮，
+                    # 只在预览里「能看见」不算数），提到 text2 的 0.45 才真的排得出一行点
+                    p.setBrush(theme.text2(0.45 * fa))
+                cx = x + slot / 2.0
+                p.drawRoundedRect(QtCore.QRectF(cx - w / 2.0, cy - 2.0, w, 4.0), 2.0, 2.0)
+                x += slot
+            return
+        # 模型太多或地方太窄：退化成「3/8」，文字比一排米粒点更好数
+        p.setFont(self.f_time)
+        p.setPen(theme.text3(0.75 * fa))
+        p.drawText(QtCore.QRectF(x0, ay, max(0.0, x_end - x0), QUOTA_AXIS_H),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"{cur + 1}/{n}")
 
     def _paint_curve(self, p: QtGui.QPainter, r: QtCore.QRectF,
                      series: list[tuple[float, float]], a: float, hot: bool) -> None:
