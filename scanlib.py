@@ -18,6 +18,9 @@
     - 会话名：优先 SQLite sessions.custom_title（用户在界面里改过的名字），
       取不到回落 jsonl 的 aiTitle（AI 自动生成的原始标题），再回落 cwd / "会话"
     - 进行中：最后活动在 ACTIVE_WINDOW_MIN 分钟内
+    - 上下文占用：SQLite session_usage 的 used / size（客户端写的权威值）
+    - 额度：jsonl 行内 providerData.rawUsage.quota = {model, percent, reset_at}，
+      percent 是该窗口**已用**百分比，reset_at 是下次重置的 unix 秒
 """
 
 from __future__ import annotations
@@ -53,6 +56,44 @@ def default_db_path() -> Path:
     return Path(env) if env else Path.home() / ".workbuddy" / "workbuddy.db"
 
 
+def _open_ro(db_path=None):
+    """只读打开 workbuddy.db，返回 connection（调用方负责 close）。不可用则抛异常。"""
+    from urllib.parse import quote
+    import sqlite3
+    path = Path(db_path) if db_path else default_db_path()
+    uri = "file:" + quote(str(path), safe="/:") + "?mode=ro"
+    return sqlite3.connect(uri, uri=True, timeout=0.5)
+
+
+def session_context(db_path=None) -> Dict[str, Tuple[int, int]]:
+    """读 {sessionId: (已用 token, 上下文窗口大小)}——每个会话的上下文占用。
+
+    这是「上下文还剩多少」的唯一权威来源：WorkBuddy 每次调用后把
+    `used / size` 写进 workbuddy.db 的 `session_usage` 表，包含了系统提示、
+    工具结果与历史轮次的实际占用。jsonl 只能靠「最后一次调用的 input+output」
+    反推，遇到自动压缩、会话分叉、缓存命中口径差异都会失真，所以只作数据源缺口
+    时的备选（本函数不提供，调用方自行决定要不要退）。
+
+    只读打开、读不到就返回空表，绝不让统计因客户端升级或库被占用而挂掉。
+    size <= 0 的行直接丢弃：那是「窗口未知」，拿它算百分比会除零或得出 0%。
+    """
+    try:
+        con = _open_ro(db_path)
+        try:
+            rows = con.execute(
+                "SELECT session_id, used, size FROM session_usage WHERE size > 0"
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception:
+        return {}
+    out: Dict[str, Tuple[int, int]] = {}
+    for sid, used, size in rows:
+        if isinstance(sid, str) and isinstance(used, int) and isinstance(size, int) and size > 0:
+            out[sid] = (max(0, used), size)
+    return out
+
+
 def custom_titles(db_path=None) -> Dict[str, str]:
     """读 {sessionId: 用户改过的会话名}；读不到就返回空表，绝不抛错。
 
@@ -63,13 +104,9 @@ def custom_titles(db_path=None) -> Dict[str, str]:
     只读打开（URI mode=ro），不创建、不修改、不加锁升级；库被 WorkBuddy
     占用或表结构变化时静默回落到 aiTitle，不让用量统计因改名功能挂掉。
     """
-    from urllib.parse import quote
-
     path = Path(db_path) if db_path else default_db_path()
     try:
-        import sqlite3
-        uri = "file:" + quote(str(path), safe="/:") + "?mode=ro"
-        con = sqlite3.connect(uri, uri=True, timeout=0.5)
+        con = _open_ro(path)
         try:
             rows = con.execute(
                 "SELECT id, custom_title FROM sessions "
@@ -163,6 +200,21 @@ def day_of(moment: Optional[dt.datetime]) -> str:
 
 def clock_of(moment: Optional[dt.datetime]) -> str:
     return moment.strftime("%H:%M") if moment else "--:--"
+
+
+def downsample_pts(pts: List[tuple], n: int) -> List[tuple]:
+    """把 (时间, 已用%) 序列等距抽稀到 n 个点，末点必须保留。
+
+    报表与灵动岛共用（此前只写在 scan_service 里）：抽稀而不是分桶平均——
+    配额曲线单调上升，平均会把台阶抹圆，末点也会被拉低，让「已用 93%」
+    和曲线终点对不上，看起来像两个数据源。
+    """
+    m = len(pts)
+    if m <= n:
+        return list(pts)
+    out = [pts[int(i * (m - 1) / (n - 1))] for i in range(n)]
+    out[-1] = pts[-1]
+    return out
 
 
 def short_proj(path: str) -> str:

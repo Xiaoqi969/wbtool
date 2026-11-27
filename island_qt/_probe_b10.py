@@ -93,15 +93,18 @@ def part_abc() -> None:
 
 def part_d() -> None:
     from PySide6 import QtCore, QtGui, QtWidgets
-    from content.detail import CARD_PAD_X, PAD_X, ROW_H, DetailPage
+    from content.detail import CARD_PAD_X, CTX_W, PAD_X, ROW_H, DetailPage
     from ui.theme import theme
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])  # noqa: F841
     page = DetailPage(640.0)
     sessions = [
-        {"name": "修复托盘图标不跟随主题", "tokens": 128_400, "rate": 0.0, "last": "03:40"},
-        {"name": "把灵动岛移植到 PySide6 并修掉 asar 那个坑", "tokens": 620_100, "rate": 12.4, "last": "03:41"},
-        {"name": "读取 git.json 文件", "tokens": 2_300, "rate": 1_234, "last": "03:42"},
+        {"name": "修复托盘图标不跟随主题", "tokens": 128_400, "rate": 0.0, "last": "03:40",
+         "ctx": {"used": 67_500, "size": 300_000}},
+        {"name": "把灵动岛移植到 PySide6 并修掉 asar 那个坑", "tokens": 620_100, "rate": 12.4, "last": "03:41",
+         "ctx": {"used": 291_000, "size": 300_000}},
+        {"name": "读取 git.json 文件", "tokens": 2_300, "rate": 1_234, "last": "03:42",
+         "ctx": {"used": 1_400, "size": 600_000}},
         {"name": "日报 HTML 的时间口径", "tokens": 88_000, "rate": 123_456, "last": "03:43"},
         {"name": "最后一个会话", "tokens": 0, "rate": 999_999, "last": "03:44"},
     ]
@@ -112,17 +115,18 @@ def part_d() -> None:
     })
 
     h = page.preferred_height()
-    # 布局算术复核（与 paint 里的同一套常量）
+    # 布局算术复核（与 paint 里的同一套常量；含 2026-11-28 新增的上下文占用列）
     inner_l = PAD_X + CARD_PAD_X
     inner_r = 640.0 - PAD_X - CARD_PAD_X
     w_time, w_tok, w_rate, gap = 44.0, 54.0, 48.0, 8.0
-    x_rate = inner_r - w_time - gap - w_tok - gap - w_rate
-    name_w = x_rate - gap - inner_l
+    x_ctx = inner_r - w_time - gap - w_tok - gap - w_rate - gap - CTX_W
+    x_rate = x_ctx + CTX_W + gap
+    name_w = x_ctx - gap - inner_l
     print("D 布局")
-    print(f"  高度 {h:.0f}px；名称列 {name_w:.0f}px；流速列 [{x_rate:.0f},{x_rate + w_rate:.0f}]；"
-          f"token 列右缘 {inner_r - w_time - gap:.0f}")
-    ok = name_w >= 200 and x_rate > inner_l + 150
-    print(f"  [{'OK ' if ok else 'FAIL'}] 名称列未被挤压、流速列不与名称重叠")
+    print(f"  高度 {h:.0f}px；名称列 {name_w:.0f}px；上下文列 [{x_ctx:.0f},{x_ctx + CTX_W:.0f}]；"
+          f"流速列 [{x_rate:.0f},{x_rate + w_rate:.0f}]；token 列右缘 {inner_r - w_time - gap:.0f}")
+    ok = name_w >= 200 and x_rate > inner_l + 150 and x_rate > x_ctx + CTX_W
+    print(f"  [{'OK ' if ok else 'FAIL'}] 名称列未被挤压、上下文/流速列不重叠")
     if not ok:
         fails.append("D 列宽")
 

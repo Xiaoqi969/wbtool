@@ -4,7 +4,10 @@
 契约严格对齐 island/src/scanner.js 的 summary()，渲染层可无缝换源：
     {
       "today":  {"token": 0, "credit": 0, "in": 0, "out": 0, "ratePerSec": 0},
-      "active": [{"name": "会话标题", "tokens": 0, "last": "HH:MM", "rate": 0.0}],
+      "active": [{"name": "会话标题", "tokens": 0, "last": "HH:MM", "rate": 0.0,
+                  "ctx": {"used": 0, "size": 0} | null}],
+      "quota":  [{"model": "hy4", "percent": 93, "resetAt": 1794747829,
+                  "series": [[毫秒, 已用百分比], ...]}],
       "files":  0,
       "updated": "HH:MM:SS"
     }
@@ -12,6 +15,15 @@
 `active[].rate` 是该会话**自己的**生成速度（tok/s），2026-11-18 新增：总值只能回答
 「现在整体多快」，展开态里 5 个会话同时在跑时，看不出是谁在产出、谁只是挂着。
 口径与 `today.ratePerSec` 完全一致（同一个窗口、同样只算 output），只是按 sid 分桶。
+
+`active[].ctx`（2026-11-28 新增）是该会话的上下文占用，读 `workbuddy.db` 的
+`session_usage.used/size`。有了它才能回答「这个会话还能聊多久 / 是不是该开新会话」——
+token 总量只说明今天用了多少，跟「当前这轮还剩多少余量」是两件事。
+
+`quota[]`（2026-11-28 新增）是模型配额的消耗曲线：每行 LLM 调用都带
+`rawUsage.quota = {model, percent, reset_at}`，percent 是该配额窗口的**已用**百分比。
+按 reset_at 分窗（窗口一换就把旧点丢掉，曲线只讲当前这一窗），summary 里降采样到
+QUOTA_SERIES_MAX 个点交给渲染层画面积折线。
 
 两层结构：
     Tracker   纯 Python，无 Qt 依赖——可单独 import、可 CLI 跑、可单测
@@ -46,6 +58,8 @@ from scanlib import (
     custom_titles,
     day_of,
     default_projects_dir,
+    downsample_pts,
+    session_context,
     to_line,
 )
 
@@ -53,6 +67,14 @@ from scanlib import (
 # 10 秒一刷才会活地跳动。代价很低——IncrementalReader 按文件记已读偏移，稳态每轮只读新增字节
 # （首轮全量约 1.7s）。
 SCAN_INTERVAL_SEC = 10
+
+# 配额曲线交给渲染层前降采样到这个点数。实测一个 24h 窗口能有 1400+ 条样本，
+# 直接画既拖慢重绘也没意义（面板宽 580px，一个像素放不下两条线）。
+QUOTA_SERIES_MAX = 160
+# 单模型样本上限（内存护栏）。按毫秒排序后只留最近这么多条，跨天也不会无限涨。
+QUOTA_POINTS_MAX = 1500
+# 单模型最多保留几个配额窗口（同一个模型会残留历史窗口的采样）。
+QUOTA_WINDOWS_MAX = 4
 
 
 def _now_ms() -> float:
@@ -76,6 +98,11 @@ class Tracker:
         # sid -> [(事件毫秒, output)]，与 flow 同一套事件，只是按会话分桶。
         # 只服务展开态的「每会话流速」，不参与任何落盘；会话转出 active 即整条丢弃。
         self.session_flow: Dict[str, List[tuple]] = {}
+        # sid -> (used, size)：上下文占用，每轮从 workbuddy.db 重读（权威值）
+        self.ctx: Dict[str, tuple] = {}
+        # model -> {reset_at: [(毫秒, 已用百分比)]}。按窗口分桶而不是只留一份：
+        # 扫描顺序不等于时间顺序，旧会话文件后扫到会把「当前窗口」冲掉（见 _add_quota）。
+        self.quota: Dict[str, Dict[int, List[tuple]]] = {}
         self._recomputing = False
 
     # -- 扫描 ---------------------------------------------------------------
@@ -84,6 +111,8 @@ class Tracker:
         # 每轮重读用户改过的会话名：改名是低频操作，但改完希望下一轮（≤10s）就生效。
         # 只读 SQLite 约 10~30ms，相对首轮扫描 1.7s / 稳态增量可忽略。
         self.titles = custom_titles()
+        # 上下文占用同理：客户端每轮对话后更新，跟着 10s 的节拍走，展开态才不会看到过时的百分比。
+        self.ctx = session_context()
         if self.root.is_dir():
             self._walk(str(self.root), now)
         cutoff = now - dt.timedelta(minutes=ACTIVE_WINDOW_MIN)
@@ -149,6 +178,7 @@ class Tracker:
             self.boot_tokens = 0
             self.flow.clear()
             self.session_flow.clear()
+            self.quota.clear()          # 全量重扫会把配额点再走一遍，不清会重复
             self.reader.reset()
             self._walk(str(self.root), now)
         finally:
@@ -163,6 +193,9 @@ class Tracker:
             amt = ln.pd.get("credit")
             if isinstance(amt, (int, float)) and not isinstance(amt, bool):
                 self._add_day(day, 0, 0, 0, float(amt), ln.sid)
+
+        if ln.quota and moment:
+            self._add_quota(ln.quota, moment)
 
         nu = ln.nu
         if nu:
@@ -189,6 +222,38 @@ class Tracker:
             if ln.cwd and not s["proj"]:
                 s["proj"] = ln.cwd
 
+    def _add_quota(self, q: dict, moment: dt.datetime) -> None:
+        """记一条配额采样点，按 (模型, 窗口) 分桶。
+
+        为什么要按 reset_at 分桶、而不是「换个 reset 就清空」：扫描顺序不等于时间顺序。
+        同一个模型常常一会儿读到上周的旧会话文件、一会儿读到今天的新文件，后写的会
+        把先写的整段清掉，「当前窗口」会随机变成某个旧窗口。分桶之后各存各的，
+        出 summary 时再挑「采样时间最新」的那一桶。
+
+        窗口语义（实测）：`reset_at` 是**本窗口的结束时刻**，窗口长 24h，percent 从 0
+        爬到 100 后重置 —— 所以 reset_at 已经过去的那一桶是过期数据，不能再当成
+        「现在已用多少」展示（见 `quota_list`）。
+        """
+        model = q.get("model") or ""
+        if not model:
+            return
+        try:
+            reset = int(float(q.get("resetAt") or 0))
+        except (TypeError, ValueError):
+            reset = 0
+        pct = float(q.get("percent") or 0)
+        ms = moment.timestamp() * 1000
+
+        per_model = self.quota.setdefault(model, {})
+        pts = per_model.setdefault(reset, [])
+        pts.append((ms, pct))
+        if len(pts) > QUOTA_POINTS_MAX:
+            del pts[:-QUOTA_POINTS_MAX]
+        if len(per_model) > QUOTA_WINDOWS_MAX:      # 只留采样最新的几个窗口，防内存缓慢涨
+            keep = sorted(per_model, key=lambda r: per_model[r][-1][0], reverse=True)
+            for r in keep[QUOTA_WINDOWS_MAX:]:
+                per_model.pop(r, None)
+
     def _add_day(self, day: str, in_t, out_t, tokens, credit, sid: str) -> None:
         td = self.totals.setdefault(day, {"t": 0, "cr": 0.0, "in": 0, "out": 0})
         td["t"] += tokens
@@ -209,11 +274,13 @@ class Tracker:
         out = []
         for sid, v in self.active.items():
             tok = (self.session_tokens.get(sid) or {}).get(d, 0)
+            c = self.ctx.get(sid)
             out.append({
                 "name": v["title"] or v["proj"] or "会话",
                 "last": v["last"],
                 "tokens": tok,
                 "rate": self.session_rate(sid, now),
+                "ctx": {"used": c[0], "size": c[1]} if c else None,
             })
         out.sort(key=lambda a: a["last"], reverse=True)
         return out
@@ -251,6 +318,36 @@ class Tracker:
         total = sum(e[1] for e in evts if e[0] >= cutoff)
         return total / (RATE_WINDOW_MS / 1000)
 
+    def quota_list(self) -> List[dict]:
+        """每个模型一条「当前窗口」的配额曲线，按「已用最多」优先排序。
+
+        取窗口的规则：同一模型可能有多个窗口（历史会话文件还在盘上），取**采样时间
+        最新**的那一桶；若这一桶的 reset_at 已经过去，说明窗口已重置、里面的百分比
+        是上一窗的旧账，整条丢掉（宁可不画，也不画一条骗人的 99%）。
+
+        排序理由：面板只画一条主曲线，该画最该被看见的那条 —— 快用完的模型。
+        """
+        now_s = time.time()
+        out = []
+        for model, windows in self.quota.items():
+            if not windows:
+                continue
+            reset = max(windows, key=lambda r: windows[r][-1][0])
+            pts = sorted(windows[reset])
+            if not pts:
+                continue
+            if reset and reset <= now_s - 120:      # 窗口已结束（留 2 分钟时钟容差）
+                continue
+            series = _downsample(pts, QUOTA_SERIES_MAX)
+            out.append({
+                "model": model,
+                "percent": series[-1][1],
+                "resetAt": reset,
+                "series": [[ms, pct] for ms, pct in series],
+            })
+        out.sort(key=lambda a: (-a["percent"], -a["series"][-1][0]))
+        return out
+
     def summary(self) -> dict:
         t = self.today()
         now = _now_ms()                 # 同一帧里所有流速用同一个「现在」，避免各算各的
@@ -264,12 +361,22 @@ class Tracker:
             },
             "active": [
                 {"name": a["name"], "tokens": a["tokens"], "last": clock_of(a["last"]),
-                 "rate": a["rate"]}
+                 "rate": a["rate"], "ctx": a["ctx"]}
                 for a in self.active_list(now)
             ],
+            "quota": self.quota_list(),
             "files": len(self.files),
             "updated": dt.datetime.now().strftime("%H:%M:%S"),
         }
+
+
+def _downsample(pts: List[tuple], n: int) -> List[tuple]:
+    """等距抽稀到 n 个点，末尾点必须保留（它就是「当前已用」）。
+
+    实现在 scanlib.downsample_pts（报表侧也调它），这里保留同名薄壳是为了
+    探针与外部调用方（_probe_b13）的 import 不变。
+    """
+    return downsample_pts(pts, n)
 
 
 if _HAS_QT:

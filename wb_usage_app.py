@@ -59,6 +59,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 import webbrowser
 from ctypes import wintypes
@@ -70,17 +71,23 @@ from scanlib import (
     count_image_blocks,
     custom_titles,
     default_projects_dir,
+    downsample_pts,
     iter_jsonl,
     short_proj,
     to_line,
     to_moment,
 )
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 APP_NAME = "WBtool"
 CLEAN_DAYS_DEFAULT = 30        # 「可清除」阈值（天）：闲置会话中只有全部数据都超过该天数的才清除，可用 --days 覆盖
 KEEP_RECENT_DAYS = 7           # 规则1：近 N 天内有过对话的会话，无论文件多旧都【永不清除】
 CLEAN_BATCH_SIZE = 10          # 单次执行的文件数上限，逐批校验，降低误操作风险
+# 额度曲线：单窗口保留的原始采样上限（内存护栏）、曲线最多画几个点。
+# 与灵动岛（scan_service.QUOTA_POINTS_MAX / QUOTA_SERIES_MAX）同口径，
+# 两边画出来的形状才一致；实测单窗口最多 1600 条采样，160 点足够看出折线台阶。
+QUOTA_POINTS_MAX = 4000
+QUOTA_SERIES_MAX = 160
 AUTHOR = "小柒"
 AUTHOR_URL = "https://xiaoqilucky.com"
 
@@ -203,13 +210,71 @@ def scan_old_files(projects_dir=None, days=CLEAN_DAYS_DEFAULT):
     }
 
 
+def add_quota_point(buckets, q, moment):
+    """记一条配额采样，按 (模型, 窗口 reset_at) 分桶。
+
+    与灵动岛同一套口径（scan_service.Tracker._add_quota）：分桶而不是
+    「换窗口就清空」——扫描顺序不等于时间顺序，旧会话文件后扫到会把当前
+    窗口的采样冲掉。moment 为空（时间戳缺失的行）直接丢弃，宁可少一个点，
+    也不拿文件 mtime 冒充采样时刻把曲线画歪。
+    """
+    if moment is None:
+        return
+    model = q.get("model") or ""
+    if not model:
+        return
+    try:
+        reset = int(float(q.get("resetAt") or 0))
+    except (TypeError, ValueError):
+        reset = 0
+    pts = buckets.setdefault((model, reset), [])
+    pts.append((moment.timestamp() * 1000.0, float(q.get("percent") or 0)))
+    if len(pts) > QUOTA_POINTS_MAX:
+        del pts[:-QUOTA_POINTS_MAX]
+
+
+def quota_series(buckets, now_ts=None):
+    """每个模型取「采样最新的那个窗口」，输出可直接画面积折线的序列。
+
+    为什么不是每个窗口都画：同一模型在上周、昨天的窗口混在一起，一张图里会有
+    多条互相打架的曲线；报表更该回答「我现在这个窗口用成什么样」。
+    过期窗口（reset_at 已过）保留但打标记 —— 报告是复盘工具，不是实时看板，
+    「上个窗口用满了 99%」本身是有价值的信息，只是不能装作是「现在」。
+    """
+    now = time.time() if now_ts is None else now_ts
+    # 先按模型收敛：每个模型只留「采样最新」的那个窗口（同一模型跨周会有 3~4 个窗口）
+    latest = {}
+    for (model, reset), pts in buckets.items():
+        if not pts:
+            continue
+        last = max(pts, key=lambda p: p[0])[0]
+        cur = latest.get(model)
+        if cur is None or last > cur[0]:
+            latest[model] = (last, reset, pts)
+
+    out = []
+    for model, (_last, reset, pts) in latest.items():
+        pts = sorted(pts)
+        series = downsample_pts(pts, QUOTA_SERIES_MAX)
+        out.append({
+            "model": model,
+            "percent": series[-1][1],
+            "resetAt": reset,
+            "expired": bool(reset and reset < now),
+            "points": len(pts),
+            "series": [[ms, pct] for ms, pct in series],
+        })
+    out.sort(key=lambda a: (a["expired"], -a["percent"]))
+    return out
+
+
 def collect_all(projects_dir=None, clean_days=CLEAN_DAYS_DEFAULT):
     """扫描 jsonl，只提取可展示的统计字段；projects_dir 为 None 时使用默认目录。"""
     records = []          # 每次 LLM 调用：token / 积分 / 模型 / 项目 / 会话 / 时间
     daily = {}            # 按天预聚合的行为统计
     sessions = {}         # 会话元信息（不含正文）
     gen_credit = []       # 生成工具（图片等）独立积分事件
-    quota_latest = {}     # 每个模型最新配额
+    quota_buckets = {}    # (模型, 窗口 reset_at) -> [(毫秒, 已用%)]
     total_lines = 0
 
     # 用户改过的会话名（SQLite sessions.custom_title），一次读取供全部行复用；
@@ -297,7 +362,7 @@ def collect_all(projects_dir=None, clean_days=CLEAN_DAYS_DEFAULT):
                 if not nu:
                     continue
                 if ln.quota:
-                    quota_latest[ln.quota["model"]] = ln.quota
+                    add_quota_point(quota_buckets, ln.quota, moment)
 
                 records.append({
                     "d": day, "h": hour, "m": ln.model, "p": proj, "s": sid,
@@ -314,7 +379,7 @@ def collect_all(projects_dir=None, clean_days=CLEAN_DAYS_DEFAULT):
             "cwd": s["cwd"],
             "first": s["first"], "last": s["last"], "lines": s["lines"],
         })
-    quota_out = sorted(quota_latest.values(), key=lambda x: x["model"])
+    quota_out = quota_series(quota_buckets)
     return {
         "records": records,
         "daily": daily,
@@ -580,6 +645,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
 .chip{background:#f1f6f7;border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-size:12px;color:#475569}
 .chip b{color:var(--teal-d);font-variant-numeric:tabular-nums}
+/* 模型额度曲线：一个模型一张卡，进行中的窗口排在前面；过期窗口整卡降饱和，不当成「现在」 */
+.qgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.qcard{border:1px solid var(--line);border-radius:12px;padding:12px 14px 8px;background:linear-gradient(180deg,#fbfdfe,#f6fafb)}
+.qcard.old{background:#fafbfc;border-color:#edf0f2}
+.qhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.qmodel{font-size:12.5px;font-weight:700;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qpct{font-size:20px;font-weight:800;color:var(--teal-d);font-variant-numeric:tabular-nums;line-height:1;flex:0 0 auto}
+.qpct.amber{color:#c07c0a}
+.qpct.old{color:#98a2ae}
+.qsub{font-size:11.5px;color:var(--muted);margin:4px 0 6px;line-height:1.55}
+.qsub b{color:#5b6573;font-weight:600}
+.qempty{font-size:12px;color:var(--muted);padding:6px 0}
+.qsvg{display:block;margin-top:2px}
 .free{color:#0a9b6a;font-weight:600}
 .clean-warn{background:#fff8e8;border:1px solid #f2dca8;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#8a6316;line-height:1.85;margin:14px 0 0}
 .clean-warn b{color:#7a5209}
@@ -614,7 +692,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
 #tip b{color:#7dd3fc}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-thumb{background:#cdd5db;border-radius:8px}
-@media(max-width:860px){.ov{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}.hrow .lab{width:120px;flex-basis:120px}.hrow .val{width:120px;flex-basis:120px}}
+@media(max-width:860px){.ov{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}.qgrid{grid-template-columns:1fr}.hrow .lab{width:120px;flex-basis:120px}.hrow .val{width:120px;flex-basis:120px}}
 @media(max-width:720px){.cards{grid-template-columns:1fr}.topbar{flex-direction:column;align-items:flex-start}.meta{text-align:left}.right{width:100%}.mini3,.bl{grid-template-columns:1fr}}
 </style>
 </head>
@@ -660,6 +738,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
   </div>
 
   <div class="panel">
+    <div class="ph"><h2>模型额度</h2><div class="hint" id="quotaHint">当前计费窗口 · 不随范围切换</div></div>
+    <div class="qgrid" id="quotaCards"></div>
+  </div>
+
+  <div class="panel">
     <div class="ph"><h2>Token 构成</h2><div class="hint">输入 = 缓存命中 + 未命中；输出 = 思考 + 正文</div></div>
     <div class="stack" id="tokenStack"></div>
     <div class="legend"><span><i class="sw" style="background:#0aa6b8"></i>缓存命中</span><span><i class="sw" style="background:#5fd0dc"></i>缓存未命中</span><span><i class="sw" style="background:#e0a020"></i>思考 token</span><span><i class="sw" style="background:#f5cf6b"></i>正文输出</span></div>
@@ -699,8 +782,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",R
       <div><div style="font-size:12px;color:var(--muted);margin-bottom:8px">消息类型分布</div>
         <div class="hbar" id="typeBars"></div></div>
       <div><div style="font-size:12px;color:var(--muted);margin-bottom:8px">其他指标</div>
-        <div class="chips" id="miscChips"></div>
-        <div id="quotaBox" style="margin-top:12px"></div></div>
+        <div class="chips" id="miscChips"></div></div>
     </div>
   </div>
 
@@ -930,12 +1012,80 @@ function renderMisc(ev){
   ];
   document.getElementById('miscChips').innerHTML=chips.map(([k,v])=>`<div class="chip">${k} <b>${v}</b></div>`).join('');
   document.getElementById('miscHint').textContent=`${Object.keys(ev.types).length} 种消息类型`;
-  const q=DATA.quota||[];
-  document.getElementById('quotaBox').innerHTML=q.length?
-    '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">模型配额（最近一次）</div><div class="chips">'+
-    q.map(x=>{ let rt=''; const n=Number(x.resetAt); if(n){ const d=new Date(n>1e11?n:n*1000); if(!isNaN(d)) rt=' · 重置 '+d.toLocaleDateString('zh-CN'); }
-      return `<div class="chip">${esc(x.model)} 已用 <b>${x.percent}%</b>${esc(rt)}</div>`; }).join('')+'</div>'
-    :'<div style="font-size:12px;color:var(--muted)">无配额记录</div>';
+}
+function hmOf(ms){ const d=new Date(ms); if(isNaN(d.getTime())) return '--';
+  const p=n=>String(n).padStart(2,'0');
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+function hoursLeft(sec){ const h=(sec*1000-Date.now())/36e5;
+  if(h<=0) return ''; if(h>=24) return `${Math.floor(h/24)} 天 ${Math.round(h%24)} 小时`;
+  if(h>=1) return `${Math.floor(h)} 小时`; return `${Math.max(1,Math.round(h*60))} 分钟`; }
+// 单模型额度曲线：24h 窗口打满整幅，纵轴固定 0~100 —— 配额是「占上限的比例」，
+// 固定刻度才能一眼比出「谁快满了」；灵动岛用自适应刻度是因为面板太矮，
+// 报告里有整行标题说明，不存在「3% 看着像 30%」的误读。
+function quotaChart(q){
+  const W=430,H=140,padL=34,padR=12,padT=10,padB=20;
+  let pts=(q.series||[]).slice();
+  if(!pts.length) return '';
+  const res=Number(q.resetAt)||0;
+  const t1 = res? res*1000 : Math.max(pts[pts.length-1][0], Date.now());
+  const t0 = res? t1-86400000 : pts[0][0];
+  // 窗口起点即 0%：补一个起点，曲线从「刚重置」开始爬，而不是凭空出现在半空
+  if(res && pts[0][0]-t0 > 600000) pts.unshift([t0,0]);
+  const span=Math.max(60000,t1-t0), plotH=H-padT-padB, plotW=W-padL-padR;
+  const cx=ms=>padL+Math.min(1,Math.max(0,(ms-t0)/span))*plotW;
+  const cy=pct=>padT+(1-Math.min(100,Math.max(0,pct))/100)*plotH;
+  const line=pts.map(p=>`${cx(p[0]).toFixed(1)},${cy(p[1]).toFixed(1)}`);
+  const end=pts[pts.length-1];
+  const col=q.expired?'#a9b3bd':(q.percent>=80?'#e0a020':'#0aa6b8');
+  const gid='qg'+Math.random().toString(36).slice(2,9);
+  let s=`<svg class="qsvg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img">`;
+  s+=`<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">`+
+     `<stop offset="0" stop-color="${col}" stop-opacity=".26"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>`;
+  [0,25,50,75,100].forEach(v=>{ const yy=cy(v);
+    s+=`<line x1="${padL}" y1="${yy.toFixed(1)}" x2="${W-padR}" y2="${yy.toFixed(1)}" stroke="${v===0?'#e2e9ed':'#f0f4f6'}"/>`;
+    s+=`<text x="${padL-6}" y="${(yy+3).toFixed(1)}" font-size="9" fill="#a8b2bd" text-anchor="end">${v}</text>`; });
+  s+=`<path d="M ${cx(pts[0][0]).toFixed(1)} ${padT+plotH} L ${line.join(' L ')} L ${cx(end[0]).toFixed(1)} ${padT+plotH} Z" fill="url(#${gid})"/>`;
+  s+=`<polyline points="${line.join(' ')}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>`;
+  // 窗口还没结束时标一条「现在」虚线：否则新窗口刚开始那几小时，右侧一整片空白
+  // 会被误读成「图没画出来」，其实是未来的时间。
+  // 文字只在左右两端轴标签都让得开时才写——否则宁可只留虚线，也不和轴标签叠字。
+  const nowMs=Date.now();
+  if(res && nowMs>t0 && nowMs<t1){
+    const nx=cx(nowMs);
+    s+=`<line x1="${nx.toFixed(1)}" y1="${padT}" x2="${nx.toFixed(1)}" y2="${padT+plotH}" stroke="#c9d3da" stroke-dasharray="3 3"/>`;
+    if(nx>padL+96 && nx<W-padR-72)
+      s+=`<text x="${(nx-5).toFixed(1)}" y="${H-6}" font-size="9" fill="#8a94a3" text-anchor="end">现在</text>`;
+  }
+  s+=`<circle cx="${cx(end[0]).toFixed(1)}" cy="${cy(end[1]).toFixed(1)}" r="3" fill="${col}"/>`;
+  s+=`<text x="${padL}" y="${H-6}" font-size="9" fill="#8a94a3">${hmOf(t0)}</text>`;
+  s+=`<text x="${W-padR}" y="${H-6}" font-size="9" fill="#8a94a3" text-anchor="end">${hmOf(t1)}</text>`;
+  return s+'</svg>';
+}
+function renderQuota(){
+  const q=DATA.quota||[], box=document.getElementById('quotaCards');
+  if(!q.length){
+    box.innerHTML='<div class="qempty">没有配额记录：日志里需要有 providerData.rawUsage.quota（调用带配额的模型后才会写入）</div>';
+    document.getElementById('quotaHint').textContent='当前计费窗口 · 不随范围切换';
+    return;
+  }
+  const act=q.filter(x=>!x.expired).length;
+  document.getElementById('quotaHint').textContent=
+    `${q.length} 个模型 · ${act} 个窗口进行中 · 不随范围切换`;
+  box.innerHTML=q.map(x=>{
+    const pct=Math.round(x.percent);
+    const cls=x.expired?'old':(pct>=80?'amber':'');
+    let sub;
+    if(x.resetAt){
+      sub=x.expired? `窗口已于 ${hmOf(x.resetAt*1000)} 结束 · ${x.points} 次采样`
+                   : `重置 ${hmOf(x.resetAt*1000)} · 还有 ${hoursLeft(x.resetAt)} · ${x.points} 次采样`;
+    } else {
+      sub=`${x.points} 次采样 · 日志未带重置时间`;
+    }
+    return `<div class="qcard${x.expired?' old':''}">`+
+      `<div class="qhead"><span class="qmodel" title="${esc(x.model)}">${esc(modelName(x.model))}</span>`+
+      `<span class="qpct ${cls}" title="本窗口已用 ${pct}%">${pct}%</span></div>`+
+      `<div class="qsub">${sub}</div>${quotaChart(x)}</div>`;
+  }).join('');
 }
 function renderSessions(a,N){
   const meta={}; (DATA.sessions||[]).forEach(s=>meta[s.id]=s);
@@ -972,7 +1122,7 @@ function renderDailyTable(a,ev){
 function renderAll(N){
   const a=aggregate(rangeRecs(N)), ev=rangeDaily(N);
   document.getElementById('overview').innerHTML=overviewCards(a.total);
-  renderCredit(a,ev); renderTokenBreak(a.total);
+  renderCredit(a,ev); renderTokenBreak(a.total); renderQuota();
   document.getElementById('trend').innerHTML=trendBars(a.dayArr); bindBars();
   document.getElementById('trendHint').textContent=`${a.dayArr.length} 天 · ${fmt(a.total.n)} 次调用`;
   document.getElementById('modelBars').innerHTML=bars(a.modelArr,d=>modelName(d.k),d=>d.t,d=>short(d.t)+' · '+fmt(d.n)+'次');
