@@ -12,6 +12,10 @@
   MIT License
 </p>
 
+<p align="center">
+  <img src="assets/promo-1536x864.png" alt="WBtool 宣传图：灵动岛胶囊（今日用量 LED 读数）与展开态面板（额度曲线 / 会话上下文进度）" width="720">
+</p>
+
 > **WorkBuddy Usage Dashboard** — two local-only Windows tools that parse WorkBuddy
 > session logs (`~/.workbuddy/projects/**/*.jsonl`): a self-contained HTML dashboard
 > of token / credit / activity statistics, and a always-on-top "dynamic island" pill
@@ -373,6 +377,7 @@ python build.py island     # 只构建旧 Electron 版（已弃用，需 Node.js
 | `build.py` | **Windows 打包脚本**。报告与灵动岛走 PyInstaller；`island` 目标为旧 Electron 版入口（产物带 `-legacy`）。 |
 | `assets/WBtool.ico` | **exe 图标**：WorkBuddy 官方 logo，11 种尺寸。 |
 | `assets/WBtool-256.png` | **README 展示用小 logo**，由官方图标缩放而来。 |
+| `assets/promo-1536x864.png` | **README 头图**：胶囊主视觉 + 真实 UI 面板合成的宣传图。 |
 | `assets/README.md` | **资源说明**：图标来源、版权声明、替换方法。 |
 | `README.md` | 本文件。 |
 | `CHANGELOG.md` | **版本变更记录**，当前 v3.3.0。 |
